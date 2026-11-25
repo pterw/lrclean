@@ -30,6 +30,8 @@ the tests catch each one; CI does not run it.
   them goes to an outside service, a tracked file, a commit message, an issue, a pull request or an agent prompt.
 - **Files move only from an approved list, with a journal, after content-verified copies.**
 - **Online-only placeholders are never opened.**
+- **The report is for you to act on.** The tool recommends nothing it cannot show: every row of the report says
+  how it was decided. What to cull is your decision, never the tool's.
 - **Tests run on synthetic trees only.** Build each tree in a temporary directory, with the helpers in
   `tests/synth.py` and `tests/mover_world.py` and plainly synthetic names such as `shoot-a` and `IMG_0001.ARW`.
 
