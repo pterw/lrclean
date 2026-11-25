@@ -1,0 +1,15 @@
+{
+  "tests": "tests",
+  "pattern": "test_backup.py",
+  "mutants": [
+    {"name": "library root containment ignored", "edits": [{"file": "lrclean/backup.py", "old": "if any(backup_plan.is_inside(row.dest, library) for library in library_roots):", "new": "if False:"}]},
+    {"name": "changed-source guard ignores size and time", "edits": [{"file": "lrclean/backup.py", "old": "return paths.is_placeholder(attrs) or (st.st_size, st.st_mtime_ns) != (row.bytes, row.mtime_ns)", "new": "return paths.is_placeholder(attrs)"}]},
+    {"name": "read-back hash comparison ignored", "edits": [{"file": "lrclean/backup.py", "old": "if hashing.full_hash(part, open_) != sha:", "new": "if False:"}]},
+    {"name": "overwrite guard treats different bytes as identical", "edits": [{"file": "lrclean/backup.py", "old": "return (ALREADY_THERE if src_sha == dest_sha else CONFLICT), src_sha", "new": "return ALREADY_THERE, src_sha"}]},
+    {"name": "default rename replaces an existing dest", "edits": [{"file": "lrclean/backup.py", "old": "rename=os.rename,", "new": "rename=os.replace,"}]},
+    {"name": "exit code ignores a conflicting row", "edits": [{"file": "lrclean/backup.py", "old": "r.state in (CONFLICT, CHANGED, FAILED", "new": "r.state in (CHANGED, FAILED"}]},
+    {"name": "rerun skip ignores the recorded source facts", "edits": [{"file": "lrclean/backup.py", "old": "if recorded[3:] == (row.bytes, row.mtime_ns):", "new": "if True:"}]},
+    {"name": "part-file destination name accepted", "edits": [{"file": "lrclean/backup.py", "old": "if name.endswith((\".\", \" \")) or \":\" in name or name.casefold().endswith(PART_SUFFIX):", "new": "if False:"}]},
+    {"name": "destination placeholder test dropped", "edits": [{"file": "lrclean/backup.py", "old": "return paths.is_placeholder(attrs_of(row.dest, st) if attrs_of else getattr(st, \"st_file_attributes\", 0))", "new": "return False"}]}
+  ]
+}

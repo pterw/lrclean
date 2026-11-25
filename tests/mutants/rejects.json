@@ -1,0 +1,27 @@
+{
+  "tests": "tests",
+  "pattern": "test_reject*.py",
+  "mutants": [
+    {"name": "verified list age test ignored", "edits": [{"file": "lrclean/reject_archive.py", "old": "age_ok = stat(paths.fs_path(verified)).st_mtime_ns >= stat(paths.fs_path(manifest)).st_mtime_ns", "new": "age_ok = True"}]},
+    {"name": "source size test ignored", "edits": [{"file": "lrclean/reject_archive.py", "old": "if st.st_size != row.bytes:", "new": "if False:"}]},
+    {"name": "source time test ignored", "edits": [{"file": "lrclean/reject_archive.py", "old": "if st.st_mtime_ns != row.mtime_ns:", "new": "if False:"}]},
+    {"name": "every-pick test becomes some-pick", "edits": [{"file": "lrclean/rejects.py", "old": "return all(pick == -1 for pick in picks)", "new": "return any(pick == -1 for pick in picks)"}]},
+    {"name": "keep test ignores the reject flag", "edits": [{"file": "lrclean/rejects.py", "old": "if path_norm in view.photos and not is_rejected(view, path_norm):", "new": "if path_norm in view.photos:"}]},
+    {"name": "empty develop state no longer keeps", "edits": [{"file": "lrclean/rejects.py", "old": "has_develop = any(d is None or d == 1 for d in developed)", "new": "has_develop = any(d == 1 for d in developed)"}]},
+    {"name": "all-picks-empty refusal dropped", "edits": [{"file": "lrclean/rejects.py", "old": "if all(pick is None for picks in live.picks.values() for pick in picks):", "new": "if False:"}]},
+    {"name": "stale refusal dropped", "edits": [{"file": "lrclean/rejects.py", "old": "if paths.norm(live.source) in {paths.norm(s) for s in stale}:", "new": "if False:"}]},
+    {"name": "role refusal dropped", "edits": [{"file": "lrclean/rejects.py", "old": "if view.role != expected_roles.get(paths.norm(view.source)):", "new": "if False:"}]},
+    {"name": "no_archive_copy looks at the first root only", "edits": [{"file": "lrclean/rejects.py", "old": "\"no_archive_copy\": lambda s: reject_archive.NO_ARCHIVE_COPY in s.states,", "new": "\"no_archive_copy\": lambda s: reject_archive.NO_ARCHIVE_COPY in s.states[:1],"}]},
+    {"name": "verdict tests look at the reject only, not its sidecars", "edits": [{"file": "lrclean/rejects.py", "old": "hit = next((s for s in subjects if tests[name](s)), None)", "new": "hit = next((s for s in subjects[:1] if tests[name](s)), None)"}]},
+    {"name": "coverage gate never holds", "edits": [{"file": "lrclean/rejects.py", "old": "\"coverage_incomplete\": lambda s: not coverage_complete,", "new": "\"coverage_incomplete\": lambda s: False,"}]},
+    {"name": "family hold never starts", "edits": [{"file": "lrclean/rejects.py", "old": "queue = deque(pn for pn in sorted(found) if own[pn] != \"on_list\")", "new": "queue = deque()"}]},
+    {"name": "symmetric hold of a shared sidecar never starts", "edits": [{"file": "lrclean/rejects.py", "old": " | {o for s in owned[pn] for o in sharers[s]} for pn in found}", "new": " for pn in found}"}]},
+    {"name": "relative form of a record rejects too", "edits": [{"file": "lrclean/rejects.py", "old": "if not picks or path_norm not in view.absolute:", "new": "if not picks:"}]},
+    {"name": "size alone groups twin paths", "edits": [{"file": "lrclean/reject_twin.py", "old": "groups.setdefault((hashed.full, hashed.size), []).append(hashed)", "new": "groups.setdefault((hashed.size,), []).append(hashed)"}, {"file": "lrclean/reject_twin.py", "old": "for other in index.by_hash[(mine.full, mine.size)]:", "new": "for other in index.by_hash[(mine.size,)]:"}]},
+    {"name": "carried hash always valid", "edits": [{"file": "lrclean/reject_twin.py", "old": "valid = (row[\"h_size\"], row[\"h_mtime_ns\"], row[\"h_file_index\"]) == mine", "new": "valid = True"}]},
+    {"name": "two names of one file count as twins", "edits": [{"file": "lrclean/reject_twin.py", "old": " and (st.st_dev, st.st_ino) != (mine_st.st_dev, mine_st.st_ino):", "new": ":"}]},
+    {"name": "the twin stays test (shoot record and live developed 1) ignored", "edits": [{"file": "lrclean/rejects.py", "old": "return any(v.role == \"shoot\" and twin_norm in v.absolute for v in reads) and any(v.role == \"live\" and (1, settings) in v.absolute_settings.get(twin_norm, ()) for v in reads)", "new": "return True"}]},
+    {"name": "the reject's no-shoot-record test ignored", "edits": [{"file": "lrclean/rejects.py", "old": "if any(v.role == \"shoot\" and (path_norm in v.photos or path_norm in v.sidecars) for v in reads):", "new": "if False:"}]},
+    {"name": "settings compared in the live catalog only, not in every catalog read", "edits": [{"file": "lrclean/rejects.py", "old": "held = {(d, s or None) for v in reads for d, s in _develop_pairs(v, path_norm) if d is None or d == 1}", "new": "held = {(d, s or None) for v in reads if v.role == \"live\" for d, s in _develop_pairs(v, path_norm) if d is None or d == 1}"}]}
+  ]
+}

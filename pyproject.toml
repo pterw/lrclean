@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lrclean"
+version = "0.1.0"
+description = "Free a full photo drive without losing a photo or breaking a Lightroom Classic catalog."
+readme = "README.md"
+requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Peter Wiercioch" }]
+keywords = [
+    "lightroom-classic",
+    "photography",
+    "photo-management",
+    "deduplication",
+    "duplicate-files",
+    "backup",
+    "raw-photos",
+    "digital-asset-management",
+    "python",
+    "cli",
+    "windows",
+]
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/pterw/lrclean"
+Issues = "https://github.com/pterw/lrclean/issues"
+Changelog = "https://github.com/pterw/lrclean/blob/main/CHANGELOG.md"
+
+[project.scripts]
+lrclean = "lrclean.cli:main"
+
+[tool.setuptools]
+packages = ["lrclean"]

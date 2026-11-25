@@ -1,0 +1,13 @@
+{
+  "tests": "tests",
+  "pattern": "test_copies.py",
+  "mutants": [
+    {"name": "recorded test limited to photos", "edits": [{"file": "lrclean/copies.py", "old": "c.pn in v.photos or c.pn in v.sidecars", "new": "c.pn in v.photos"}]},
+    {"name": "work test limited to the recording catalogs", "edits": [{"file": "lrclean/copies.py", "old": "rejects.work_of(v, c.pn) for v in w.views", "new": "rejects.work_of(v, c.pn) for v in w.recording"}]},
+    {"name": "kept twin test reads any record", "edits": [{"file": "lrclean/copies.py", "old": "return pn in view.absolute and not rejects.is_rejected(view, pn)", "new": "return pn in view.photos"}]},
+    {"name": "purged reject test drops kind and sha256", "edits": [{"file": "lrclean/copies.py", "old": "if rec[\"kind\"] == \"reject\" and rec[\"state\"] == \"purged\":", "new": "if rec[\"state\"] == \"purged\":"}, {"file": "lrclean/copies.py", "old": "return digest if digest in wanted else None", "new": "return digest if wanted else None"}]},
+    {"name": "coverage refusal dropped", "edits": [{"file": "lrclean/copies.py", "old": "if not coverage.complete:", "new": "if False:"}]},
+    {"name": "sidecar test dropped", "edits": [{"file": "lrclean/copies.py", "old": "bool(w.side_keys.intersection(rejects.base_index([c.pn])))", "new": "False"}]},
+    {"name": "rejected-twin hold skipped for a builder-hashed copy", "edits": [{"file": "lrclean/copies.py", "old": "if matched and _twin_rejected(c, w, matched):", "new": "if False:"}]}
+  ]
+}

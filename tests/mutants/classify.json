@@ -1,0 +1,12 @@
+{
+  "tests": "tests",
+  "pattern": "test_classify*.py",
+  "mutants": [
+    {"name": "coverage guard ignored", "edits": [{"file": "lrclean/classify.py", "old": "if not c.cov.complete:", "new": "if False:"}]},
+    {"name": "recorded membership inverted", "edits": [{"file": "lrclean/classify.py", "old": "return f[\"path_norm\"] in c.recorded", "new": "return f[\"path_norm\"] not in c.recorded"}]},
+    {"name": "identical by sample instead of full hash", "edits": [{"file": "lrclean/classify.py", "old": "key = (_kind(f), f[\"size\"], h.full)", "new": "key = (_kind(f), f[\"size\"], h.sample)"}]},
+    {"name": "same-file guard removed", "edits": [{"file": "lrclean/classify.py", "old": "if f[\"id\"] in c.aliases:", "new": "if False:"}]},
+    {"name": "placeholder keeper twin allowed", "edits": [{"file": "lrclean/classify.py", "old": "[m for m in recs if not m[\"placeholder\"]]", "new": "[m for m in recs]"}]},
+    {"name": "re-check ignores the placeholder attribute", "edits": [{"file": "lrclean/classify.py", "old": "if paths.is_placeholder(getattr(st, \"st_file_attributes\", 0)):", "new": "if False:"}]}
+  ]
+}

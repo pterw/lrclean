@@ -1,0 +1,23 @@
+# Private or generated: never tracked
+out/
+work/
+.superpowers/
+HANDOFF.md
+READ-ME-FIRST.md
+.git-notes/
+CLAUDE.md
+
+# Locally installed agent skills
+.agent/
+.agents/
+.claude/
+skills-lock.json
+
+# Build products
+build/
+dist/
+*.egg-info/
+
+# Python
+__pycache__/
+*.pyc
