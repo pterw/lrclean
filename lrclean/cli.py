@@ -131,13 +131,16 @@ def _check_overlaps(cfg: dict) -> None:
     for key in ("library_roots", "backup_roots", "catalog_roots"):
         roots = cfg[key]
         for number, first in enumerate(roots):
-            if any(_overlap(first, second) for second in roots[number + 1:]):
-                raise ConfigError(key, f"{first!r} is the same folder as another entry or lies inside it "
-                                       "(or holds it)")
+            for second in roots[number + 1:]:
+                if _overlap(first, second):
+                    raise ConfigError(key, f"{first!r} and {second!r} are the same folder or one holds the "
+                                           "other; keep only one of them (the outer one)")
     for library in cfg["library_roots"]:
-        if any(_overlap(library, backup) for backup in cfg["backup_roots"]):
-            raise ConfigError("backup_roots", f"a backup root and the library root {library!r} are the same "
-                                              "folder or one lies inside the other")
+        for backup in cfg["backup_roots"]:
+            if _overlap(library, backup):
+                raise ConfigError("backup_roots", f"library_roots entry {library!r} and backup_roots entry "
+                                                  f"{backup!r} are the same folder or one holds the other; "
+                                                  "keep the library and its backup in separate folders")
 
 
 def _exclude(run: _Run) -> list[str]:
@@ -171,18 +174,14 @@ def _catalogs(run: _Run) -> int:
         exclude=_exclude(run), work_dir=os.path.join(run.base, "work"),
         live_catalog=run.cfg["live_catalog"], old_states=run.cfg["old_states"],
         processes=run.processes, now=run.now)
-    bad = sum(1 for c in _latest_catalogs(run.conn) if c["status"] in ("unreadable", "partial"))
+    latest = _latest_catalogs(run.conn)
+    bad = sum(1 for c in latest if c["status"] in ("unreadable", "partial"))
     print(f"catalogs stored: {len(ids)} ({bad} unreadable or partial)")
-    _print_unreadable(run.conn, ids)
+    this_run = set(ids)  # a catalog stored unreadable by an earlier run is not printed again
+    for row in latest:
+        if row["id"] in this_run and row["status"] == "unreadable":
+            print(f"unreadable: {row['source_path']}: {row['reason']}")
     return OK
-
-
-def _print_unreadable(conn, ids: list[int]) -> None:
-    """One line per catalog stored unreadable in this run (by row id): the catalog and why."""
-    sql = ('SELECT source_path, reason FROM "catalog" WHERE status = \'unreadable\' '
-           f'AND id IN ({",".join("?" * len(ids))}) ORDER BY id')
-    for row in conn.execute(sql, ids):
-        print(f"unreadable: {row['source_path']}: {row['reason']}")
 
 
 def _inventory(run: _Run) -> int:
@@ -934,7 +933,8 @@ def main(argv: list[str] | None = None, *, processes=catalogs.running_processes,
             return _fail(CONFIG_ERROR, f"configuration error: the base folder is the root {root}")
     if backup_plan.is_inside(cfg["photo_root"], base):
         return _fail(CONFIG_ERROR, f"configuration error: photo_root: {cfg['photo_root']!r} is the tool "
-                                   "folder or lies inside it")
+                                   "folder or lies inside it; move the tool folder "
+                                   f"{base!r} outside the photo folder")
     conn = None if args.command in _NO_DATABASE else store.connect(
         os.path.join(base, "work", "lrclean.sqlite"))
     run = _Run(args, cfg, conn, base, processes, now, stat, attrs_of, exists, volume_of, free_bytes,

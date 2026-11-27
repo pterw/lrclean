@@ -80,53 +80,98 @@ class ConfigTests(CliCase):
     def files_under_top(self):
         return sorted(os.path.join(d, name) for d, dirs, files in os.walk(self.top) for name in dirs + files)
 
-    def test_a_configuration_that_would_be_read_wrongly_is_refused_before_anything_is_written(self):
-        nested = os.path.join(self.lib, "shoot-a")
-        in_backup = os.path.join(self.backup, "x")
-        cases = {
-            "relative path": ("old_states", {"old_states": ["cats"]}),
-            "dot segment": ("library_roots", {"library_roots": [self.lib + "/shoot-a/.."]}),
-            "control character": ("exclude", {"exclude": ["C:\temp"]}),
-            "library child before parent": ("library_roots", {"library_roots": [nested, self.lib]}),
-            "library parent before child": ("library_roots", {"library_roots": [self.lib, nested]}),
-            "library duplicate": ("library_roots", {"library_roots": [self.lib, self.lib]}),
-            "backup nested": ("backup_roots", {"backup_roots": [self.backup, in_backup]}),
-            "catalog nested": ("catalog_roots", {"catalog_roots": [self.cats, os.path.join(self.cats, "a")]}),
-            "backup inside library": ("backup_roots", {"backup_roots": [nested]}),
-            "library inside backup": ("backup_roots", {"library_roots": [in_backup]}),
-            "photo root is the base": ("photo_root", {"photo_root": self.base}),
-            "photo root inside the base": ("photo_root",
-                                           {"photo_root": os.path.join(self.base, "stray")}),
-        }
+    def refused(self, name, key, change, named):
+        """`catalogs` exits 2 on this configuration, names `key` and each of `named`, and writes nothing."""
+        with self.subTest(name):
+            self.write_config({**self.config, **change})
+            before = self.files_under_top()
+            code, err = self.run_cli("catalogs")
+            self.assertEqual(code, 2)
+            for text in (key, *named):
+                self.assertIn(text, err)
+            self.assertEqual(self.files_under_top(), before)
+            self.assertFalse(os.path.exists(self.out_dir()))
+
+    def test_a_path_spelled_wrongly_is_refused_for_every_key_before_anything_is_written(self):
         os.makedirs(os.path.join(self.cats, "a"))
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.top)
         self.assertTrue(os.path.isdir("cats"))  # the relative path exists, so only the check refuses it
-        self.assertIn("\t", "C:\temp")  # a tab, not a backslash and a t
-        for name, (key, change) in cases.items():
-            with self.subTest(name):
-                self.write_config({**self.config, **change})
-                before = self.files_under_top()
-                code, err = self.run_cli("catalogs")
-                self.assertEqual(code, 2)
-                self.assertIn(key, err)
-                self.assertEqual(self.files_under_top(), before)
-                self.assertFalse(os.path.exists(self.out_dir()))
+        spellings = {
+            "relative path": "cats",
+            "dot segment": self.lib + "/shoot-a/..",
+            "lone dot segment": self.lib + "/.",
+            "dot segment between backslashes": self.lib + "\\shoot-a\\..\\x",
+            "lone dot between backslashes": self.lib + "\\.\\x",
+            "tab inside an absolute path": os.path.join(self.lib, "x\ty"),
+            "newline inside an absolute path": os.path.join(self.lib, "x\ny"),
+        }
+        for name in ("tab inside an absolute path", "newline inside an absolute path"):
+            self.assertTrue(os.path.isabs(spellings[name]))  # absolute, so only the control check refuses it
+        for key in (*cli.LIST_KEYS, "photo_root", "live_catalog"):
+            for name, item in spellings.items():
+                change = {key: [item] if key in cli.LIST_KEYS else item}
+                fix = ["forward slashes"] if name.startswith(("tab", "newline")) else []  # the message gives the fix
+                self.refused(f"{key}: {name}", key, change, [repr(item), *fix])
+
+    def test_a_nested_pair_or_a_shared_folder_is_refused_in_any_spelling_and_names_both_entries(self):
+        nested = os.path.join(self.lib, "shoot-a")
+        in_backup = os.path.join(self.backup, "x")
+        in_cats = os.path.join(self.cats, "a")
+        slashed = nested.replace("\\", "/")
+        upper = nested.upper()  # the whole child in capitals, so its start differs in case from the parent's
+        self.assertNotEqual(nested, upper)
+        self.assertNotEqual(nested, slashed)
+        cases = {
+            "library child before parent": ("library_roots", {"library_roots": [nested, self.lib]},
+                                            [nested, self.lib]),
+            "library parent before child": ("library_roots", {"library_roots": [self.lib, nested]},
+                                            [nested, self.lib]),
+            "library duplicate": ("library_roots", {"library_roots": [self.lib, self.lib]}, [self.lib]),
+            "backup nested": ("backup_roots", {"backup_roots": [self.backup, in_backup]},
+                              [self.backup, in_backup]),
+            "catalog nested": ("catalog_roots", {"catalog_roots": [self.cats, in_cats]}, [self.cats, in_cats]),
+            "backup inside library": ("backup_roots", {"backup_roots": [nested]},
+                                      ["library_roots", self.lib, nested]),
+            "library inside backup": ("backup_roots", {"library_roots": [in_backup]},
+                                      ["library_roots", self.backup, in_backup]),
+            "child in another letter case": ("library_roots", {"library_roots": [self.lib, upper]},
+                                             [self.lib, upper]),
+            "child with forward slashes": ("library_roots", {"library_roots": [self.lib, slashed]},
+                                           [self.lib, slashed]),
+            "parent with a trailing separator": ("library_roots",
+                                                 {"library_roots": [self.lib + os.sep, nested]},
+                                                 [self.lib + os.sep, nested]),
+            "photo root is the base": ("photo_root", {"photo_root": self.base}, [self.base, "outside"]),
+            "photo root inside the base": ("photo_root", {"photo_root": os.path.join(self.base, "stray")},
+                                           [os.path.join(self.base, "stray"), self.base, "outside"]),
+        }
+        os.makedirs(in_cats)
+        for name, (key, change, named) in cases.items():
+            self.refused(name, key, change, [repr(text) if os.path.isabs(text) else text for text in named])  # paths as the message spells them
 
     def test_spellings_and_layouts_that_are_read_rightly_still_load(self):
-        inside_library = os.path.join(self.lib, "cats")
+        path = os.path.join(self.base, "work", "config.json")
+        drive = os.path.splitdrive(self.lib)[0] + "\\"
         cases = {
             "forward slashes": {"library_roots": [self.lib.replace("\\", "/")]},
             "trailing separator": {"library_roots": [self.lib + os.sep]},
             "other letter case": {"library_roots": [self.lib.upper()]},
-            "catalog root inside a library root": {"catalog_roots": [inside_library]},
+            "catalog root inside a library root": {"catalog_roots": [os.path.join(self.lib, "cats")]},
+            "a drive root beside a catalog root inside it": {"library_roots": [drive], "backup_roots": []},
+            "sibling roots that share a prefix": {"library_roots": [os.path.join(self.top, "photos"),
+                                                                    os.path.join(self.top, "photos2")]},
+            "a pair in another case and with forward slashes": {
+                "library_roots": [self.lib.upper()], "backup_roots": [self.backup.replace("\\", "/")]},
         }
         self.assertNotEqual(self.lib.upper(), self.lib)
         for name, change in cases.items():
             with self.subTest(name):
                 self.write_config({**self.config, **change})
-                path = os.path.join(self.base, "work", "config.json")
-                self.assertEqual(cli.load_config(path)[next(iter(change))], next(iter(change.values())))
+                try:
+                    cli.load_config(path)
+                except cli.ConfigError as exc:
+                    self.fail(f"refused: {exc}")
 
     def test_every_key_is_required_and_named(self):
         for key in KEYS:
@@ -615,6 +660,32 @@ class WiringTests(CliCase):
         synth.make_unreadable(os.path.join(self.cats, "bad.lrcat"))
         self.assertEqual(self.run_cli("catalogs")[0], 0)
         self.assertIn("(1 unreadable or partial)", self.stdout)
+
+    def test_catalogs_prints_each_catalog_unreadable_in_this_run_and_why_and_none_from_an_earlier_run(self):
+        earlier = os.path.join(self.cats, "bad.lrcat")
+        synth.make_unreadable(earlier)
+        self.assertEqual(self.run_cli("catalogs")[0], 0)
+        first = self.stdout.splitlines()
+        self.assertEqual(len(first), 2)
+        self.assertTrue(first[1].startswith(f"unreadable: {earlier}: SQLite cannot read"))
+        os.remove(earlier)  # gone in the second run, which holds two unreadable catalogs for different reasons
+        garbage, unlucky = os.path.join(self.cats, "ugly.lrcat"), os.path.join(self.cats, "worse.lrcat")
+        synth.make_unreadable(garbage)
+        synth.make_unreadable(unlucky)
+        copy = shutil.copyfile
+
+        def copy_but_not_worse(source, target, **kwargs):
+            if os.path.basename(source) == "worse.lrcat":
+                raise OSError("disk full")
+            return copy(source, target, **kwargs)
+
+        with mock.patch("shutil.copyfile", side_effect=copy_but_not_worse):
+            self.assertEqual(self.run_cli("catalogs")[0], 0)
+        header, *printed = self.stdout.splitlines()
+        self.assertEqual(header, "catalogs stored: 3 (2 unreadable or partial)")
+        self.assertEqual(len(printed), 2)
+        self.assertTrue(printed[0].startswith(f"unreadable: {garbage}: SQLite cannot read"), printed[0])
+        self.assertEqual(printed[1], f"unreadable: {unlucky}: copying the catalog failed: disk full")
 
     def test_report_summary_holds_the_reason_a_catalog_was_unreadable(self):
         bad = os.path.join(self.cats, "bad.lrcat")
