@@ -481,11 +481,56 @@ class PartialRootTests(CliCase):
     def test_verify_of_a_folder_under_a_partial_root_names_the_root_and_says_to_exclude(self):
         self.assertEqual(self.run_cli("catalogs")[0], 0)
         self.assertEqual(self.run_cli("inventory", scandir=self.unlistable_shoot_a())[0], 0)
-        code, err = self.run_cli("verify", os.path.join(self.lib, "shoot-a"))
+        folder = os.path.join(self.lib, "shoot-a")
+        code, err = self.run_cli("verify", folder)
         self.assertEqual(code, 4)
+        self.assertTrue(err.startswith(f"verify stopped: no raw file under {folder} is in the latest files scans, "
+                                       "and its root is partial\n"), err)
         self.assertIn(f"partial root {self.lib}", err)
         self.assertIn("exclude", err)
         self.assertNotIn("run inventory first", err)
+
+    def test_verify_of_a_folder_under_a_complete_root_names_no_partial_root(self):
+        lib2 = os.path.join(self.top, "lib2")
+        synth.make_tree(lib2, {"shoot-c/IMG_0010.ARW": b"c" * 100})
+        empty = os.path.join(lib2, "empty")
+        os.makedirs(empty)
+        self.assertNotEqual(lib2, self.lib)
+        self.write_config({**self.config, "library_roots": [self.lib, lib2]})
+        self.assertEqual(self.run_cli("catalogs")[0], 0)
+        self.assertEqual(self.run_cli("inventory", scandir=self.unlistable_shoot_a())[0], 0)
+        self.assertIn(f"partial root {self.lib}", self.stdout)  # precondition: one root is partial
+        code, err = self.run_cli("verify", empty)
+        self.assertEqual(code, 4)
+        self.assertIn("run inventory first", err)
+        self.assertNotIn("partial root", err)
+
+    def test_a_backup_root_that_is_not_connected_is_not_reported_as_a_partial_root(self):
+        shutil.rmtree(self.backup)
+        self.assertEqual(self.run_cli("catalogs")[0], 0)
+        self.assertEqual(self.run_cli("inventory"), (0, ""))
+        self.assertEqual(self.stdout.splitlines(), ["files scans stored: 2"])
+        self.assertEqual(self.rows("SELECT status FROM scan WHERE kind = 'files' AND root = "
+                                   f"'{self.backup}'"), [("not_connected",)])
+
+    def test_a_file_directly_in_a_library_root_is_not_cured_by_excluding_the_root_and_the_advice_says_so(self):
+        stray = os.path.join(self.lib, "IMG_0003.ARW")
+        synth.make_tree(self.lib, {"IMG_0003.ARW": b"c" * 100})
+        real = os.stat
+
+        def stat(path, *args, **kwargs):
+            if str(path).endswith("IMG_0003.ARW"):
+                raise PermissionError(path)
+            return real(path, *args, **kwargs)
+
+        self.assertEqual(self.run_cli("catalogs")[0], 0)
+        self.write_config({**self.config, "exclude": [self.lib]})
+        with mock.patch.object(os, "stat", stat):
+            self.assertEqual(self.run_cli("inventory"), (0, ""))
+        lines = self.stdout.splitlines()
+        self.assertEqual(lines[1], f"partial root {self.lib}: could not read {stray}")  # excluding the root cures nothing
+        self.assertIn("a file directly in a library root cannot be excluded: make it readable or move it into a "
+                      "folder", lines[2])
 
     def test_backup_plan_for_a_root_with_no_files_scan_still_says_run_inventory_first(self):
         self.write_config({**self.config, "archive_roots": [os.path.join(self.top, "arch1")]})

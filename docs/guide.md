@@ -46,7 +46,7 @@ scanned, staged from or backed up. Make it outside the photo folders.
 | `live_catalog` | The path of your main catalog |
 | `old_states` | Older states or backup copies of the live catalog: they neither reject nor keep, but their develop work and picks still keep a photo |
 | `excluded_catalogs` | Catalogs whose records protect nothing (unreadable ones, or ones you judge irrelevant). `catalogs` still copies and reads them; only the verdicts ignore them. |
-| `exclude` | Folders never walked. A folder you cannot list, or a file you cannot read, makes its whole root `partial` and every later step ignores that root: `inventory` names it, and you add the folder (for a file, the folder that holds it) here and run `inventory` again. |
+| `exclude` | Folders never walked. A folder you cannot list, or a file you cannot read, makes its whole root `partial` and every later step ignores that root: `inventory` names it, and you add the folder (for a file, the folder that holds it) here and run `inventory` again. A file directly in a library root cannot be excluded: make it readable or move it into a folder. |
 | `group_depth` | How many folder levels under `photo_root` make one group (a year folder) in the report |
 
 A catalog's role is always given here, never guessed from its name or folder.

@@ -68,7 +68,8 @@ before the backup phase):
 
 A whole system drive has folders that a user without administrator rights cannot list. `inventory` names any other
 folder or file it could not read; add each folder named, and for a file the folder that holds it, to `exclude` and
-run `inventory` again.
+run `inventory` again. A file directly in a library root cannot be excluded: make it readable or move it into a
+folder.
 
 `--base` defaults to the current folder, so run from the tool folder or put `--base <tool folder>` before the
 command: `lrclean --base <tool folder> report`. Close Lightroom, then run the read-only report. It writes only inside

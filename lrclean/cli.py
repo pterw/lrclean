@@ -202,7 +202,8 @@ def _inventory(run: _Run) -> int:
 
 
 _EXCLUDE_ADVICE = ("add each folder named, and for a file the folder that holds it, to exclude in "
-                   "work/config.json and run inventory again")
+                   "work/config.json and run inventory again; a file directly in a library root cannot be "
+                   "excluded: make it readable or move it into a folder")
 
 
 def _partial_lines(run: _Run, roots: list[str]) -> list[str]:
@@ -214,7 +215,6 @@ def _partial_lines(run: _Run, roots: list[str]) -> list[str]:
                                     (state.scan_id, inventory.UNREADABLE))
             lines.append(f"partial root {state.root}: could not read " + "; ".join(r["path_orig"] for r in rows))
     return lines
-    return partial
 
 
 def _hash(run: _Run) -> int:
@@ -237,7 +237,8 @@ def _verify(run: _Run) -> int:
         holders = [root for root in run.cfg["library_roots"] if backup_plan.is_inside(folder, root)]
         partial = _partial_lines(run, holders)
         if partial:  # running inventory again cannot cure this: the root has to be made readable
-            raise StepMissing("\n".join([*partial, _EXCLUDE_ADVICE])) from exc
+            why = f"verify stopped: no raw file under {folder} is in the latest files scans, and its root is partial"
+            raise StepMissing("\n".join([why, *partial, _EXCLUDE_ADVICE])) from exc
         raise StepMissing(f"run inventory first: no raw file under {folder} is in the latest files scans") from exc
     print(", ".join(f"{name}={n}" for name, n in counts.items()))
     return OK
