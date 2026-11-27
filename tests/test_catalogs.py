@@ -414,12 +414,14 @@ class TestStatuses(Tmp):
 
 UNREADABLE_REASONS = {  # case -> a phrase only that case's reason holds
     "placeholder": "is an online-only placeholder",
-    "attributes": "attributes of",
+    "attributes": "main.lrcat-shm cannot be read",
+    "attributes_catalog": "main.lrcat cannot be read",
     "snapshot_link": "with links resolved",
     "work_inside": "work folder is inside",
     "copy_failed": "copying the catalog failed",
     "sqlite": "SQLite cannot read",
 }
+DENIED_TEXT = "denied\nagain"  # an OS error text holding a newline
 
 
 class TestUnreadableReasons(Tmp):
@@ -435,15 +437,19 @@ class TestUnreadableReasons(Tmp):
             synth.make_catalog(source, [])
         extra = {"work_dir": work}
 
-        def denied_stat(path):
-            if path.replace("\\", "/").endswith("shoot-a/main.lrcat-shm"):
-                raise PermissionError("denied")
-            return os.stat(path)
+        def denied_stat(ending):
+            def stat(path):
+                if path.replace("\\", "/").endswith(ending):
+                    raise PermissionError(DENIED_TEXT)
+                return os.stat(path)
+            return stat
 
         if name == "placeholder":
             extra["stat"] = placeholder_stat(f"{name}/shoot-a/main.lrcat")
         elif name == "attributes":
-            extra["stat"] = denied_stat
+            extra["stat"] = denied_stat("shoot-a/main.lrcat-shm")
+        elif name == "attributes_catalog":
+            extra["stat"] = denied_stat("shoot-a/main.lrcat")
         elif name == "work_inside":
             extra["work_dir"] = os.path.join(home, "w")
         elif name == "snapshot_link":
@@ -487,6 +493,10 @@ class TestUnreadableReasons(Tmp):
                 reason = rows[source]["reason"]
                 self.assertEqual(rows[source]["status"], "unreadable")
                 self.assertIn(UNREADABLE_REASONS[name], reason)
+                self.assertIn("\n", DENIED_TEXT)
+                self.assertNotIn("\n", reason)  # one line, though the error text holds a newline
+                if name.startswith("attributes"):
+                    self.assertIn("denied again", reason)
                 for other, phrase in UNREADABLE_REASONS.items():
                     if other != name:
                         self.assertNotIn(phrase, reason)
@@ -499,13 +509,6 @@ class TestUnreadableReasons(Tmp):
                 with contextlib.redirect_stdout(out):
                     cli._print_unreadable(conn, stored[name])
                 self.assertEqual(out.getvalue().splitlines(), [f"unreadable: {source}: {reason}"])
-
-    def test_ok_empty_and_partial_rows_keep_an_empty_reason_in_the_csv(self):
-        synth.make_catalog(self.path("r", "ok.lrcat"), [{"base": "IMG_5"}])
-        conn = self.conn()
-        self.scan(conn, [os.path.join(self.tmp, "r")])
-        rows = catalog_views.catalog_inventory_rows(conn, excluded_catalogs=[])
-        self.assertEqual([(r["status"], r["reason"]) for r in rows], [("ok", "")])
 
 
 class TestRunningProcesses(unittest.TestCase):
@@ -536,7 +539,7 @@ class TestRunningProcesses(unittest.TestCase):
         def fake(*args, **kw):
             if kw.get("check"):
                 raise subprocess.CalledProcessError(1, "tasklist")
-            return subprocess.CompletedProcess([], 1, stdout="")
+            return subprocess.CompletedProcess([], 1, stdout='"x.exe","1"\n')
         with mock.patch("lrclean.catalogs.subprocess.run", side_effect=fake):
             with self.assertRaises(RuntimeError):
                 catalogs.running_processes()

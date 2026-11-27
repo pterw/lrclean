@@ -330,7 +330,7 @@ def _store_catalog(conn, scan_id, source, role, processes, work_dir, stat=os.sta
         conn, "catalog", scan_id=scan_id, source_path=source, snapshot_path=snapshot,
         role=role, status=result.status, size=size, mtime_ns=mtime_ns,
         db_version=result.db_version,
-        wal_bytes=wal_bytes, has_lock=has_lock, reason=reason or result.reason)
+        wal_bytes=wal_bytes, has_lock=has_lock, reason=" ".join((reason or result.reason).split()))
     for rec in result.records:
         store.insert_row(conn, "record", catalog_id=catalog_id, **rec)
     for root in result.roots:

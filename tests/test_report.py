@@ -65,6 +65,8 @@ class ReportTest(unittest.TestCase):
             self.assertTrue(handle.read().startswith(b"\xef\xbb\xbf"))
         self.assertEqual(read_csv(os.path.join(self.out, "08_missing.csv"))[1][0], "D:/lib/Zoë/IMG_0001.ARW")
         self.assertNotIn("\r", self.summary())
+        header = read_csv(os.path.join(self.out, "01_catalogs.csv"))[0]
+        self.assertEqual(header[header.index("status") + 1], "reason")
 
     def test_every_section_ends_with_how_decided(self):
         for section in report.SECTIONS.values():
