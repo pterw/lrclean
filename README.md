@@ -67,10 +67,9 @@ before the backup phase):
 ```
 
 A whole system drive has folders that a user without administrator rights cannot list. When `inventory` cannot
-read a path, it names the path and marks the root's scan partial. Add an unreadable subfolder (for a file in a
-subfolder, the folder that holds it) to `exclude` in `work/config.json`. Excluding the root does not help. Make
-an unlistable root or a file directly in a root readable, move the file to an excluded subfolder, or remove the
-root from the config. Run `inventory` again.
+read a path, it names the path and marks the root's scan partial. Add the unreadable subfolder (for a file, the
+folder that holds it) to `exclude` in `work/config.json`, then run `inventory` again. Excluding a root does not
+help: move a file lying directly in a root into a subfolder, make an unlistable root readable, or remove it.
 
 `hash`, `verify` and the report's verdicts skip file rows from partial scans. `backup-plan` needs at least one
 complete library scan and walks `photo_root` directly. `rejects` selects rejects from the catalogs and uses hashes

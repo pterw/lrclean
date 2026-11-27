@@ -210,9 +210,9 @@ def _inventory(run: _Run) -> int:
 
 
 _EXCLUDE_ADVICE = ("Add an unreadable subfolder (for a file in a subfolder, the folder that holds it) "
-                   "to exclude in work/config.json. Excluding the root does not help. Make an unlistable root "
-                   "or a file directly in a root readable, move the file to an excluded subfolder, or remove "
-                   "the root from the config. Run inventory again.")
+                   "to exclude in work/config.json. For a file directly in a root, move it to a subfolder and "
+                   "exclude that folder; excluding the root does not help. Make an unlistable root readable "
+                   "or remove it from the config. Run inventory again.")
 
 
 def _partial_lines(run: _Run, roots: list[str]) -> list[str]:
@@ -253,7 +253,7 @@ def _verify(run: _Run) -> int:
             backup_roots=run.cfg["backup_roots"], stat=run.stat, now=run.now)
     except backups.NoRawUnder as exc:
         related = [root for root in run.cfg["library_roots"]
-                   if backup_plan.is_inside(folder, root) or backup_plan.is_inside(root, folder, below_only=True)]
+                   if backup_plan.is_inside(folder, root) or backup_plan.is_inside(root, folder)]
         partial = _partial_lines(run, related)
         if partial:
             why = f"verify stopped: no raw file under {folder} is in the latest files scans."
@@ -300,7 +300,7 @@ def _backup_plan(run: _Run) -> int:
     except backup_plan.ManifestError as exc:
         partial = _partial_lines(run, run.cfg["library_roots"])
         if partial:  # the only ManifestError of plan_manifests is "no library root has a complete files scan"
-            raise StepMissing(f"{exc}. " + "\n".join(partial)) from exc
+            raise StepMissing("\n".join([f"{exc}.", *partial])) from exc
         raise StepMissing(f"run inventory first: {exc}") from exc
     written = backup_plan.write_plan(os.path.join(run.base, "out"), plan)
     for root, path in zip(plan.roots, written):

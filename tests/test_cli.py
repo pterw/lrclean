@@ -1,5 +1,6 @@
 import contextlib
 import csv
+import gc
 import hashlib
 import io
 import json
@@ -15,6 +16,7 @@ import threading
 import time
 import types
 import unittest
+import warnings
 from unittest import mock
 
 import synth
@@ -103,6 +105,7 @@ class ConfigTests(CliCase):
             "doubled trailing separator": self.lib + "\\\\",
             "doubled interior separator": self.lib + "/shoot-a//other",
             "extended path with forward slashes": "\\\\?\\" + self.lib.replace("\\", "/"),
+            "doubled separator inside a UNC path": "\\\\server\\share\\\\x",
             "dot segment": self.lib + "/shoot-a/..",
             "lone dot segment": self.lib + "/.",
             "dot segment between backslashes": self.lib + "\\shoot-a\\..\\x",
@@ -450,9 +453,32 @@ class PartialRootTests(CliCase):
         self.assertEqual(self.stdout.splitlines(), ["files scans stored: 2", partial, cli._EXCLUDE_ADVICE])
         code, err = self.run_cli("backup-plan", volume_of=lambda p: p)
         self.assertEqual(code, 4)
-        self.assertIn(partial, err)
-        self.assertIn(cli._EXCLUDE_ADVICE, err)
+        self.assertIn("\n".join(["no library root has a complete files scan.", partial, cli._EXCLUDE_ADVICE]), err)
         self.assertNotIn("run inventory first", err)
+
+    def test_the_exclude_advice_appears_once_when_any_root_named_has_an_unreadable_path(self):
+        lib2 = os.path.join(self.top, "lib2")
+        synth.make_tree(lib2, {"shoot-c/IMG_0010.ARW": b"c" * 100})
+        self.assertNotEqual(lib2, self.lib)
+        self.write_config({**self.config, "library_roots": [self.lib, lib2],
+                           "archive_roots": [os.path.join(self.top, "arch1")]})
+        self.assertEqual(self.run_cli("catalogs")[0], 0)
+        for roots in ([self.lib, lib2], [lib2, self.lib]):
+            with self.subTest(roots=roots):
+                self.write_config({**self.config, "library_roots": roots,
+                                   "archive_roots": [os.path.join(self.top, "arch1")]})
+                self.assertEqual(self.run_cli("inventory", scandir=self.unlistable(lib2))[0], 0)
+                conn = store.connect(os.path.join(self.base, "work", "lrclean.sqlite"))
+                try:  # a scan that stopped with no unreadable path, newer than the one that named lib2
+                    store.finish_scan(conn, store.begin_scan(conn, self.lib, "files", now=lambda: NOW),
+                                      "partial", now=lambda: NOW)
+                finally:
+                    conn.close()
+                code, err = self.run_cli("backup-plan", volume_of=lambda p: p)
+                self.assertEqual(code, 4)
+                self.assertIn(f"partial root {self.lib}: the scan did not finish. Run inventory again.", err)
+                self.assertIn(f"partial root {lib2}: could not read {lib2}", err)
+                self.assertEqual(err.count(cli._EXCLUDE_ADVICE), 1)
 
     def test_every_partial_root_of_the_run_gets_its_own_line(self):
         self.assertEqual(self.run_cli("catalogs")[0], 0)
@@ -496,7 +522,7 @@ class PartialRootTests(CliCase):
                     self.assertIn("for a file in a subfolder, the folder that holds it", lines[2])
                 self.assertEqual(len(lines), 3 if partial else 1)  # a clean inventory has no advice line
 
-    def test_verify_of_a_folder_under_a_partial_root_names_the_root_and_says_to_exclude(self):
+    def test_verify_of_a_folder_under_a_partial_root_names_the_root_and_says_to_exclude_only_when_a_path_is_unreadable(self):
         self.assertEqual(self.run_cli("catalogs")[0], 0)
         shoot_a = os.path.join(self.lib, "shoot-a")
         for root, folder in ((self.lib, shoot_a), (self.lib, self.lib), (shoot_a, self.lib)):
@@ -576,7 +602,7 @@ class PartialRootTests(CliCase):
                         cli._EXCLUDE_ADVICE,
                     ])
             os.remove(os.path.join(root, "IMG_0003.ARW"))
-        self.assertIn("Excluding the root does not help", self.stdout)
+        self.assertIn("excluding the root does not help", cli._EXCLUDE_ADVICE)
 
     def test_backup_plan_for_a_root_with_no_files_scan_still_says_run_inventory_first(self):
         self.write_config({**self.config, "archive_roots": [os.path.join(self.top, "arch1")]})
@@ -855,16 +881,23 @@ class WiringTests(CliCase):
     def test_base_that_is_a_root_is_refused_before_anything_is_created(self):
         original_base = self.base
         self.addCleanup(setattr, self, "base", original_base)
-        for base, root in ((self.lib, self.lib), (self.backup, self.backup), (self.cats, self.cats),
-                           (original_base, os.path.join(original_base, "stray"))):
-            with self.subTest(base=base, root=root):
+        stray = os.path.join(original_base, "stray")
+        shoot_a = os.path.join(self.lib, "shoot-a")
+        backup_x = os.path.join(self.backup, "x")
+        for base, key, change, root in (
+                (self.lib, "library_roots", {}, self.lib),
+                (self.backup, "backup_roots", {}, self.backup),
+                (self.cats, "catalog_roots", {}, self.cats),
+                (original_base, "catalog_roots", {"catalog_roots": [stray]}, stray),
+                (self.lib, "library_roots", {"library_roots": [shoot_a]}, shoot_a),
+                (self.backup, "backup_roots", {"backup_roots": [backup_x]}, backup_x)):
+            with self.subTest(base=base, key=key, root=root):
                 self.base = base
-                self.write_config({**self.config, **({"catalog_roots": [root]} if root != base else {})})
+                self.write_config({**self.config, **change})
                 for step in ("catalogs", "report"):
                     code, err = self.run_cli(step)
                     self.assertEqual(code, 2)
-                    self.assertIn("root", err)
-                    self.assertIn(root, err)
+                    self.assertIn(f"{key}: root {root} ", err)
                 self.assertEqual(sorted(os.listdir(os.path.join(base, "work"))), ["config.json"])
                 self.assertFalse(os.path.exists(self.out_dir()))
 
@@ -881,7 +914,6 @@ class WiringTests(CliCase):
                 self.assertIn("library_roots", err)
                 self.assertIn(spelled, err)
                 self.assertFalse(os.path.exists(self.out_dir()))
-        self.base = original_base
 
 
 class BackupPlanTests(CliCase):
@@ -2861,6 +2893,9 @@ class ExitCodeTests(RejectsCase):
             synth.make_tree(os.path.dirname(path), {os.path.basename(path): b"x"})
 
         def undo():
+            with warnings.catch_warnings():  # store.connect leaves a connection it could not set up open
+                warnings.simplefilter("ignore", ResourceWarning)
+                gc.collect()
             shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
             if saved is not None:
                 synth.make_tree(os.path.dirname(path), {os.path.basename(path): saved})
@@ -2890,7 +2925,9 @@ class ExitCodeTests(RejectsCase):
              {"archive_roots": [self.arch[0], gone]}, None, {}),
             ("backup-run on a missing drive", ("backup-run", stranded), 2, gone,
              {"archive_roots": [gone]}, None, {"free_bytes": no_free_space_read}),
-            ("backup-run --apply on a missing drive", ("backup-run", stranded, "--apply"), 2, gone,
+            ("backup-run, the manifest's own second drive is missing", ("backup-run", stranded), 2, gone,
+             {"archive_roots": [self.arch[0], gone]}, None, {"free_bytes": no_free_space_read}),
+            ("backup-run --apply on a missing drive",("backup-run", stranded, "--apply"), 2, gone,
              {"archive_roots": [gone]}, None, {"free_bytes": no_free_space_read}),
             ("backup-run while the other drive is missing", ("backup-run", manifest), 0,
              f"0 dest_exists {dest}", {"archive_roots": [self.arch[0], gone]}, None,
@@ -2907,7 +2944,9 @@ class ExitCodeTests(RejectsCase):
              {"processes": catalogs.running_processes, "error": subprocess.TimeoutExpired("tasklist", 30)}),
             ("catalogs, tasklist fails before snapshot", ("catalogs",), 3, "cannot list processes", {}, None,
              {"processes": mock.Mock(side_effect=[["explorer.exe"], RuntimeError("cannot list processes")])}),
-            ("catalogs, work database is a folder", ("catalogs",), 6, database, {},
+            ("catalogs, work database is not a database", ("catalogs",), 6, database, {},
+             ("work/lrclean.sqlite", False), {}),
+            ("catalogs, work database is a folder",("catalogs",), 6, database, {},
              ("work/lrclean.sqlite", True), {}),
         )
         for name, argv, code, named, config, occupied, extra in cases:
