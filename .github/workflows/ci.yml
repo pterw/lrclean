@@ -38,7 +38,7 @@ jobs:
 
       - name: Run the unit suite
         shell: pwsh
-        run: python -m unittest discover -s tests
+        run: python -m unittest discover -s tests -v
 
       # Reads the first dated heading of the changelog and the project
       # version; on a tag, the tag without its leading v is the third value.

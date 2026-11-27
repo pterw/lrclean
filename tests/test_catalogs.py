@@ -1,3 +1,4 @@
+import contextlib
 import csv
 import hashlib
 import os
@@ -147,11 +148,12 @@ class TestSnapshot(Tmp):
         synth.make_catalog(source, [])
         before = listing(os.path.dirname(source))
         home = os.path.dirname(source)
-        spellings = [home, os.path.join(home, "work"), os.path.join(home, "x", "..", "work")]
-        try:
-            spellings.append(os.path.relpath(os.path.join(home, "work")))
-        except ValueError:  # another drive than the current directory: no relative spelling
-            pass
+        # The relative spelling is taken from the temporary folder, so it exists even when the checkout is on
+        # another drive (issue #13); the working folder is restored before the temporary folder is removed.
+        self.enterContext(contextlib.chdir(os.path.dirname(home)))
+        spellings = [home, os.path.join(home, "work"), os.path.join(home, "x", "..", "work"),
+                     os.path.relpath(os.path.join(home, "work"))]
+        self.assertFalse(os.path.isabs(spellings[-1]))
         for work in spellings:
             with self.subTest(work=work):
                 with self.assertRaises(ValueError):
