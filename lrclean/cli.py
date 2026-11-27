@@ -142,13 +142,27 @@ def _inventory(run: _Run) -> int:
     try:
         ids = inventory.scan_files(
             run.conn, _scan_roots(run), catalog_roots=run.cfg["catalog_roots"],
-            exclude=_exclude(run), own_dir=run.base, now=run.now, attrs_of=run.attrs_of)
+            exclude=_exclude(run), own_dir=run.base, now=run.now, attrs_of=run.attrs_of,
+            scandir=run.scandir)
     except inventory.NoCatalogScan as exc:
         raise StepMissing(f"run catalogs first: {exc}") from exc
     except ValueError as exc:
         raise ConfigError("library_roots, backup_roots", str(exc)) from exc
     print(f"files scans stored: {len(ids)}")
+    _name_partial_roots(run, ids)
     return OK
+
+
+def _name_partial_roots(run: _Run, ids: list[int]) -> None:
+    """Say which roots of this run are partial and which folders they could not read."""
+    partial = [s for s in classify.root_states(run.conn, _scan_roots(run))
+               if s.status == "partial" and s.scan_id in ids]
+    for state in partial:
+        rows = run.conn.execute('SELECT path_orig FROM "file" WHERE scan_id = ? AND ext = ? ORDER BY id',
+                                (state.scan_id, inventory.UNREADABLE))
+        print(f"partial root {state.root}: could not read " + "; ".join(r["path_orig"] for r in rows))
+    if partial:
+        print("add those folders to exclude in work/config.json and run inventory again")
 
 
 def _hash(run: _Run) -> int:
@@ -162,8 +176,13 @@ def _hash(run: _Run) -> int:
 
 def _verify(run: _Run) -> int:
     _library_scan_ids(run.conn, run.cfg["library_roots"])
+    folder = os.path.abspath(run.args.folder)
+    prefix = paths.norm(folder).rstrip("/") + "/"
+    if not any(r["ext"] in paths.RAW_EXTS and r["path_norm"].startswith(prefix)
+               for r in classify.inventoried_files(run.conn, run.cfg["library_roots"], photos_only=True)):
+        raise StepMissing(f"run inventory first: no raw file under {folder} is in the latest files scans")
     counts = backups.verify(
-        run.conn, run.args.folder, library_roots=run.cfg["library_roots"],
+        run.conn, folder, library_roots=run.cfg["library_roots"],
         backup_roots=run.cfg["backup_roots"], stat=run.stat, now=run.now)
     print(", ".join(f"{name}={n}" for name, n in counts.items()))
     return OK
@@ -200,6 +219,12 @@ def _backup_plan(run: _Run) -> int:
             archive_roots=roots, own_dir=run.base, exclude=_exclude(run), attrs_of=run.attrs_of,
             stat=run.stat, free_bytes=run.free_bytes)
     except backup_plan.ManifestError as exc:
+        states = classify.root_states(run.conn, run.cfg["library_roots"])
+        partial = [s.root for s in states if s.status == "partial"]
+        if partial and not any(s.status == "complete" for s in states):
+            raise StepMissing(f"no library root has a complete files scan: the latest scan of {', '.join(partial)} "
+                              "is partial; add the folders inventory listed to exclude in work/config.json "
+                              "and run inventory again") from exc
         raise StepMissing(f"run inventory first: {exc}") from exc
     written = backup_plan.write_plan(os.path.join(run.base, "out"), plan)
     for root, path in zip(plan.roots, written):

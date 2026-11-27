@@ -61,10 +61,13 @@ before the backup phase):
   "live_catalog": "C:\\Photos\\Main\\Main.lrcat",
   "old_states": [],
   "excluded_catalogs": [],
-  "exclude": [],
+  "exclude": ["C:\\System Volume Information"],
   "group_depth": 1
 }
 ```
+
+A whole system drive has folders that a user without administrator rights cannot list. `inventory` names any other
+folder it could not read; add it to `exclude` and run `inventory` again.
 
 `--base` defaults to the current folder, so run from the tool folder or put `--base <tool folder>` before the
 command: `lrclean --base <tool folder> report`. Close Lightroom, then run the read-only report. It writes only inside

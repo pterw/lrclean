@@ -319,6 +319,69 @@ class MixedInventoryTests(CliCase):
             self.assertEqual(snapshot(), before)
 
 
+class PartialRootTests(CliCase):
+    def unlistable_shoot_a(self):
+        real = os.scandir
+        bad = os.path.normcase(os.path.join(self.lib, "shoot-a"))
+
+        def scandir(path):
+            if os.path.normcase(os.path.abspath(path)) == bad:
+                raise PermissionError(path)
+            return real(path)
+
+        return scandir
+
+    def test_inventory_names_the_partial_root_and_folder_and_backup_plan_names_the_cause(self):
+        self.write_config({**self.config, "archive_roots": [os.path.join(self.top, "arch1")]})
+        self.assertEqual(self.run_cli("catalogs")[0], 0)
+        self.assertEqual(self.run_cli("inventory", scandir=self.unlistable_shoot_a()), (0, ""))
+        lines = self.stdout.splitlines()
+        self.assertEqual(lines[0], "files scans stored: 2")
+        self.assertEqual(lines[1], f"partial root {self.lib}: could not read {os.path.join(self.lib, 'shoot-a')}")
+        self.assertIn("exclude", lines[2])
+        self.assertEqual(len(lines), 3)  # the complete backup root is not named
+        code, err = self.run_cli("backup-plan", volume_of=lambda p: p)
+        self.assertEqual(code, 4)
+        self.assertIn(self.lib, err)
+        self.assertIn("exclude", err)
+        self.assertNotIn("run inventory first", err)
+
+    def test_backup_plan_for_a_root_with_no_files_scan_still_says_run_inventory_first(self):
+        self.write_config({**self.config, "archive_roots": [os.path.join(self.top, "arch1")]})
+        code, err = self.run_cli("backup-plan", volume_of=lambda p: p)
+        self.assertEqual(code, 4)
+        self.assertIn("run inventory first", err)
+
+
+class VerifyFolderTests(CliCase):
+    def test_any_spelling_of_the_folder_finds_the_same_files_and_an_unknown_one_exits_four(self):
+        synth.make_tree(self.lib, {"shoot-b/IMG_0003.ARW": b"n" * 100})  # a file with no copy
+        chunk = 64 * 1024  # a sample reads the first and last chunk only: only the middle differs
+        synth.make_tree(self.lib, {"shoot-a/IMG_0004.ARW": b"m" * chunk + b"p" * chunk + b"m" * chunk})
+        synth.make_tree(self.backup, {"x/IMG_0004.ARW": b"m" * chunk + b"q" * chunk + b"m" * chunk})
+        for step in ("catalogs", "inventory", "hash"):
+            self.assertEqual(self.run_cli(step)[0], 0)
+        shoot_a = os.path.join(self.lib, "shoot-a")
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.lib)
+        spellings = ("shoot-a", os.path.join("shoot-b", "..", "shoot-a"), shoot_a)
+        results = []
+        for spelling in spellings:
+            with self.subTest(spelling=spelling):
+                self.assertEqual(self.run_cli("verify", spelling), (0, ""))
+                results.append(self.stdout)
+        self.assertEqual(self.run_cli("verify", self.lib), (0, ""))
+        whole = self.stdout
+        self.assertNotEqual(results[2], whole)  # a count that ignored the folder would differ
+        self.assertIn("mismatch=1", results[2])
+        self.assertEqual(results[0], results[2])
+        self.assertEqual(results[1], results[2])
+        code, err = self.run_cli("verify", "no-such-folder")
+        self.assertEqual(code, 4)
+        self.assertIn("run inventory first", err)
+        self.assertIn(os.path.join(self.lib, "no-such-folder"), err)
+
+
 class WiringTests(CliCase):
     def run_all(self, **injected):
         for step in ("catalogs", "inventory", "hash", "report"):

@@ -38,7 +38,7 @@ scanned, staged from or backed up. Make it outside the photo folders.
 
 | Key | Meaning |
 |---|---|
-| `library_roots` | Folders on the system drive to inventory (the whole drive is fine) |
+| `library_roots` | Folders on the system drive to inventory (the whole drive is fine; add `C:\System Volume Information` and any folder `inventory` names as unreadable to `exclude`) |
 | `photo_root` | The folder you treat as the photo library; only files under it are backed up or offloaded |
 | `catalog_roots` | Folders searched for `.lrcat` files (every connected drive is fine) |
 | `backup_roots` | Folders on external drives that may already hold copies (read for the report) |
@@ -46,7 +46,7 @@ scanned, staged from or backed up. Make it outside the photo folders.
 | `live_catalog` | The path of your main catalog |
 | `old_states` | Older states or backup copies of the live catalog: they neither reject nor keep, but their develop work and picks still keep a photo |
 | `excluded_catalogs` | Catalogs whose records protect nothing (unreadable ones, or ones you judge irrelevant). `catalogs` still copies and reads them; only the verdicts ignore them. |
-| `exclude` | Folders never walked |
+| `exclude` | Folders never walked. A folder you cannot list makes its whole root `partial` and every later step ignores that root: `inventory` names the folder, and you add it here and run `inventory` again. |
 | `group_depth` | How many folder levels under `photo_root` make one group (a year folder) in the report |
 
 A catalog's role is always given here, never guessed from its name or folder.
@@ -54,6 +54,9 @@ A catalog's role is always given here, never guessed from its name or folder.
 The first nine keys (all but `archive_roots`) are required by every command. `archive_roots` is read only by
 `backup-plan`, `backup-run`, `backup-verify`, `rejects`, `copies`, `stage` and `purge`; add it before `backup-plan`.
 The report (`catalogs`, `inventory`, `hash`, `report`) runs without it.
+
+The tool folder must be on the same drive as the files `stage` moves: a file on another drive is held
+`other_volume` and stays where it is.
 
 ## Commands
 
@@ -65,7 +68,7 @@ Every command that changes something is a dry run unless given `--apply`.
 | Report | `inventory` | The files under `library_roots` and `backup_roots` | Rows in the work database |
 | Report | `hash` | Files that need a sample or full hash (resumable) | Rows in the work database |
 | Report | `report` | The work database | `out/01_catalogs.csv` to `out/11_not_read.csv` and `out/summary.md` |
-| Report | `verify <folder>` | One folder and its copies on the backup roots, in full | Rows in the work database |
+| Report | `verify <folder>` | The raw files of one folder (any spelling of it) and their copies on the backup roots, in full | Rows in the work database |
 | Backup | `backup-plan` | The tree under `photo_root` | `out/backup-manifest-<n>.csv` per archive root and a summary |
 | Backup | `backup-run <manifest> [--apply]` | The manifest you approved | Copies on the archive drive, a journal |
 | Backup | `backup-verify <manifest>` | Every source and copy, in full | `out/backup-verified-<n>.csv` |
@@ -84,10 +87,10 @@ for that long ends the run with exit 5.
 |---|---|
 | 0 | Done (or nothing to do) |
 | 2 | Configuration, list, journal or approval refused; nothing was changed |
-| 3 | Lightroom is running, or a lock file lies beside a catalog that is read |
-| 4 | Evidence is stale or incomplete: the message says what to run again (`catalogs`, `rejects`, `copies`) |
+| 3 | Lightroom is running, the list of processes cannot be read, or a lock file lies beside a catalog that is read |
+| 4 | Evidence is stale or incomplete: the message says what to run again (`catalogs`, `inventory`, `rejects`, `copies`) |
 | 5 | A drive stalled; the journal says where the run stopped |
-| 6 | Finished, but at least one row was held or refused (each named with its reason), or a file-system error stopped an `--apply` |
+| 6 | Finished, but at least one row was held or refused (each named with its reason), or a file-system error stopped a command (the message names the file) |
 
 ## The process, end to end
 
@@ -198,6 +201,10 @@ the full text.
 - **Sync clients.** A file moved out of a synced folder is deleted from the cloud copy when the sync client next
   runs. Keep it off from `stage` until `purge` has finished, and decide before you turn it back
   on.
+- **A sidecar whose name holds `;`** keeps its photo from leaving through a removal list: the list joins sidecars
+  with `;`, so the row is held.
+- **A read-only file** stops `purge` with exit 6 after its sidecars are deleted (their archive copies were checked
+  just before). Clear the read-only flag and run `purge` again.
 - **Time of check.** A change made in the moment between the last check and a rename or a delete is not seen.
 - **Windows only.** See [Requirements](#requirements).
 - **Lightroom's catalog format is private.** A future version could change the tables the tool reads. What the
