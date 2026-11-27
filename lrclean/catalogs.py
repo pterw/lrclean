@@ -108,7 +108,7 @@ def snapshot_catalog(source: str, work_dir: str, processes=running_processes, st
         if os.path.exists(old):
             os.remove(old)
     for suffix in _SUFFIXES:
-        if os.path.exists(paths.fs_path(source + suffix)):
+        if suffix == "" or os.path.exists(paths.fs_path(source + suffix)):
             shutil.copyfile(paths.fs_path(source + suffix),
                             paths.fs_path(os.path.join(folder, name + suffix)))
     return os.path.join(folder, name)
@@ -310,8 +310,7 @@ def _store_catalog(conn, scan_id, source, role, processes, work_dir, stat=os.sta
     snapshot = ""
     result = CatalogRead("unreadable", "", [], [], [])
     reason = ""
-    wal = paths.fs_path(source + "-wal")
-    wal_bytes = os.path.getsize(wal) if os.path.exists(wal) else 0
+    wal_bytes = 0
     has_lock = int(os.path.exists(paths.fs_path(source + ".lock")))
     try:
         found = stat(paths.fs_path(source))
@@ -320,6 +319,12 @@ def _store_catalog(conn, scan_id, source, role, processes, work_dir, stat=os.sta
     else:
         size, mtime_ns = found.st_size, found.st_mtime_ns
         try:
+            try:
+                wal_bytes = stat(paths.fs_path(source + "-wal")).st_size
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                raise ValueError(f"the attributes of {source}-wal cannot be read: {exc}") from exc
             snapshot = snapshot_catalog(source, work_dir, processes, stat)
             result = read_snapshot(snapshot, source)
         except ValueError as exc:

@@ -261,6 +261,63 @@ class TestSnapshot(Tmp):
         self.assertEqual([tuple(r) for r in conn.execute("SELECT status, snapshot_path FROM catalog")],
                          [("unreadable", "")])
 
+    def make_pair(self):
+        """Two catalogs of different names and sizes; returns the sources of shoot-a and shoot-b."""
+        a, b = self.path("shoot-a", "main.lrcat"), self.path("shoot-b", "other.lrcat")
+        synth.make_catalog(a, [])
+        synth.make_catalog(b, [{"base": f"IMG_{n:04d}"} for n in range(400)])
+        self.assertNotEqual(os.path.basename(a), os.path.basename(b))
+        self.assertNotEqual(os.path.getsize(a), os.path.getsize(b))
+        return a, b
+
+    def test_a_catalog_that_vanishes_before_the_copy_is_unreadable_not_empty_issue_34(self):
+        a, b = self.make_pair()
+        calls = []
+
+        def vanishing(*_):
+            calls.append(1)
+            if len(calls) == 1:
+                os.rename(a, a + ".away")
+            return []
+
+        conn = self.conn()
+        try:
+            self.scan(conn, [self.tmp], processes=vanishing)
+        finally:
+            os.rename(a + ".away", a)
+        rows = {os.path.basename(os.path.dirname(s)): (st, reason) for s, st, reason in conn.execute(
+            "SELECT source_path, status, reason FROM catalog")}
+        self.assertEqual(rows["shoot-a"][0], "unreadable")
+        self.assertIn("copying the catalog failed", rows["shoot-a"][1])
+        self.assertEqual(rows["shoot-b"], ("ok", ""))
+
+    def test_a_wal_file_that_cannot_be_read_marks_that_catalog_and_the_scan_goes_on_issue_35(self):
+        a, b = self.make_pair()
+        with open(a + "-wal", "wb") as handle:
+            handle.write(b"x" * 10)
+
+        def denied_wal(path):
+            if path.replace("\\", "/").endswith("shoot-a/main.lrcat-wal"):
+                raise PermissionError("denied")
+            return os.stat(path)
+
+        def denied_size(path):
+            if path.replace("\\", "/").endswith("shoot-a/main.lrcat-wal"):
+                raise PermissionError("denied")
+            return os.stat(path).st_size
+
+        conn = self.conn()
+        # the size is read through `stat`; the getsize patch only fails a read that bypasses the seam
+        with mock.patch("os.path.getsize", denied_size):
+            ids = self.scan(conn, [self.tmp], stat=denied_wal)
+        self.assertEqual(len(ids), 2)
+        rows = {os.path.basename(os.path.dirname(s)): (st, reason) for s, st, reason in conn.execute(
+            "SELECT source_path, status, reason FROM catalog")}
+        self.assertEqual(rows["shoot-a"][0], "unreadable")
+        self.assertIn("main.lrcat-wal", rows["shoot-a"][1])
+        self.assertEqual(rows["shoot-b"], ("ok", ""))
+        self.assertEqual(conn.execute("SELECT status FROM scan").fetchone()[0], "complete")
+
     def test_lightroom_listed_refuses_before_copy_rule_6(self):
         source = self.path("a", "main.lrcat")
         synth.make_catalog(source, [])
