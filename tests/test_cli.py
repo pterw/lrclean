@@ -18,7 +18,7 @@ import unittest
 from unittest import mock
 
 import synth
-from lrclean import backup, backup_plan, backup_verify, classify, cli, mover_files, mover_journal, mover_purge, store
+from lrclean import backup, backup_plan, backup_verify, catalogs, classify, cli, mover_files, mover_journal, mover_purge, store
 from mover_world import BATCH, World
 
 NOW = "2026-01-01T00:00:00Z"
@@ -2475,6 +2475,88 @@ class LongPathTests(MoverCase):
             self.assertEqual(self.w.main("purge", BATCH, "--apply", "--approved-sha256", self.purge_sha())[0], 0)
         self.assertFalse(os.path.exists(staged))
         self.assertTrue(os.path.isdir(os.path.dirname(staged)))
+
+
+class ExitCodeTests(RejectsCase):
+    """A command never ends in a traceback where the guide promises an exit code."""
+
+    def missing_drive(self):
+        for letter in "ZYXWVUTSRQPONMLKJIHGFED":
+            if not os.path.exists(f"{letter}:\\"):
+                return f"{letter}:\\arch"
+        self.skipTest("every drive letter exists")
+
+    def listings(self):
+        return [sorted((d, tuple(sorted(f))) for d, _, f in os.walk(root) if not d.startswith(self.base))
+                for root in (self.lib, self.cats, *self.arch)]
+
+    def occupy(self, relative, as_dir):
+        """Put a folder, or a file, where the tool folder's `relative` path must be written; undone at the end."""
+        path = os.path.join(self.base, relative)
+        saved = None
+        if os.path.exists(path):
+            with open(path, "rb") as handle:
+                saved = handle.read()
+            os.remove(path)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if as_dir:
+            os.makedirs(path)
+        else:
+            synth.make_tree(os.path.dirname(path), {os.path.basename(path): b"x"})
+
+        def undo():
+            shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
+            if saved is not None:
+                synth.make_tree(os.path.dirname(path), {os.path.basename(path): saved})
+        return undo
+
+    def tasklist_fails(self, error):
+        def fail(*args, **kwargs):
+            raise error
+        return mock.patch("lrclean.catalogs.subprocess.run", fail)
+
+    def test_each_situation_ends_with_its_documented_code_naming_its_root_or_file(self):
+        manifest = os.path.join(self.out_dir(), "backup-manifest-1.csv")
+        gone = self.missing_drive()
+        stranded = os.path.join(self.top, "stranded-manifest.csv")
+        source = os.path.join(self.lib, "shoot-a", "IMG_0001.ARW")
+        backup_plan.write_manifest(stranded, [backup_plan.Row(
+            source, os.path.join(gone, "shoot-a", "IMG_0001.ARW"), 100, os.stat(source).st_mtime_ns, "copy", "")])
+        cases = (
+            ("backup-plan on a missing drive", ("backup-plan",), 2, gone, {"archive_roots": [gone]}, None, {}),
+            ("backup-run on a missing drive", ("backup-run", stranded), 2, gone,
+             {"archive_roots": [gone]}, None, {}),
+            ("backup-run --apply on a missing drive", ("backup-run", stranded, "--apply"), 2, gone,
+             {"archive_roots": [gone]}, None, {}),
+            ("backup-run --apply, journal folder is a file", ("backup-run", manifest, "--apply"), 6,
+             "journal", {},("work/journal", False), {}),
+            ("backup-verify, list is a folder", ("backup-verify", manifest), 6,
+             "backup-verified-1.csv", {}, ("out/backup-verified-1.csv", True), {}),
+            ("rejects, output is a folder", ("rejects",), 6, "rejects.csv.tmp", {},
+             ("out/rejects.csv.tmp", True), {}),
+            ("catalogs, tasklist fails", ("catalogs",), 3, "cannot list processes", {}, None,
+             {"processes": catalogs.running_processes, "error": subprocess.CalledProcessError(1, "tasklist")}),
+            ("catalogs, tasklist times out", ("catalogs",), 3, "cannot list processes", {}, None,
+             {"processes": catalogs.running_processes, "error": subprocess.TimeoutExpired("tasklist", 30)}),
+        )
+        for name, argv, code, named, config, occupied, extra in cases:
+            with self.subTest(name):
+                self.write_config({**self.config, **config})
+                self.steps()
+                self.assertEqual(self.run_cli("inventory")[0], 0)
+                undo =self.occupy(*occupied) if occupied else lambda: None
+                before = self.listings()
+                injected = {"volume_of": lambda p: self.volumes.get(p, "z:")}
+                error = extra.get("error")
+                if "processes" in extra:
+                    injected["processes"] = extra["processes"]
+                with self.tasklist_fails(error) if error else contextlib.nullcontext():
+                    got, err = self.run_cli(*argv, **injected)
+                undo()
+                self.assertEqual(got, code, err)
+                self.assertIn(named, err)
+                self.assertNotIn("Traceback", err)
+                self.assertEqual(self.listings(), before)
 
 
 if __name__ == "__main__":

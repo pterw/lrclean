@@ -182,8 +182,18 @@ def _require_archive_roots(run: _Run) -> list[str]:
     return roots
 
 
-def _backup_plan(run: _Run) -> int:
+def _require_connected(run: _Run) -> list[str]:
+    """The archive roots, each on a drive that is connected (its free space cannot be read otherwise)."""
     roots = _require_archive_roots(run)
+    for root in roots:
+        anchor = os.path.splitdrive(os.path.abspath(root))[0]
+        if anchor and not run.exists(anchor + "\\"):
+            raise ConfigError("archive_roots", f"the drive of {root} is not connected")
+    return roots
+
+
+def _backup_plan(run: _Run) -> int:
+    roots = _require_connected(run)
     try:
         plan = backup_plan.plan_manifests(
             run.conn, library_roots=run.cfg["library_roots"], photo_root=run.cfg["photo_root"],
@@ -207,7 +217,7 @@ def _manifest_rows(run: _Run, check) -> tuple[list, int]:
 
 
 def _backup_run(run: _Run) -> int:
-    roots = _require_archive_roots(run)
+    roots = _require_connected(run)
     rows, n = _manifest_rows(run, lambda rows: backup.check_manifest(
         rows, archive_roots=roots, library_roots=run.cfg["library_roots"],
         free_bytes=run.free_bytes, exists=run.exists))
@@ -830,8 +840,11 @@ def main(argv: list[str] | None = None, *, processes=catalogs.running_processes,
          abort=os._exit, scandir=os.scandir, is_link=mover_seams.REAL.is_link, remove=os.remove,
          rmdir=os.rmdir, makedirs=os.makedirs, listdir=os.listdir, append=mover_seams.append,
          write=mover_seams.write) -> int:
+    for stream in (sys.stdout, sys.stderr):  # a path outside the code page must never stop the output
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     args = _parser().parse_args(argv)
-    base = os.path.abspath(args.base)
+    base =os.path.abspath(args.base)
     try:
         cfg = load_config(os.path.join(base, "work", "config.json"))
     except ConfigError as exc:
@@ -847,6 +860,8 @@ def main(argv: list[str] | None = None, *, processes=catalogs.running_processes,
                                  append, write, clock, abort, now), [])
     try:
         return _COMMANDS[args.command](run)
+    except OSError as exc:  # a file of the tool folder that cannot be written (the movers say more)
+        return _fail(HELD, f"{args.command} stopped on an error ({exc})")
     except ConfigError as exc:
         return _fail(CONFIG_ERROR, f"configuration error: {exc}")
     except mover_gate.Refusal as exc:

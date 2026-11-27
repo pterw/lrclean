@@ -427,7 +427,7 @@ class TestRunningProcesses(unittest.TestCase):
                 else:
                     patch = mock.patch("lrclean.catalogs.subprocess.run", return_value=failure)
                 with patch:
-                    with self.assertRaises((RuntimeError, subprocess.SubprocessError)):
+                    with self.assertRaises(RuntimeError):
                         catalogs.running_processes()
 
     def test_a_failing_tasklist_is_not_read_as_nothing_running_rule_6(self):
@@ -436,7 +436,7 @@ class TestRunningProcesses(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, "tasklist")
             return subprocess.CompletedProcess([], 1, stdout="")
         with mock.patch("lrclean.catalogs.subprocess.run", side_effect=fake):
-            with self.assertRaises(subprocess.CalledProcessError):
+            with self.assertRaises(RuntimeError):
                 catalogs.running_processes()
 
 

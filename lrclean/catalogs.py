@@ -43,7 +43,7 @@ def running_processes() -> list[str]:
     try:
         done = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True,
                               text=True, timeout=30, check=True)
-    except (OSError, UnicodeDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, subprocess.SubprocessError) as exc:
         raise RuntimeError(f"cannot list processes: {exc}") from exc
     names = [row[0].lower() for row in csv.reader(done.stdout.splitlines()) if row]
     if not names:
