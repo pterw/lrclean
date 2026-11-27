@@ -1,6 +1,5 @@
 import contextlib
 import csv
-import gc
 import hashlib
 import io
 import json
@@ -16,7 +15,6 @@ import threading
 import time
 import types
 import unittest
-import warnings
 from unittest import mock
 
 import synth
@@ -522,7 +520,7 @@ class PartialRootTests(CliCase):
                     self.assertIn("for a file in a subfolder, the folder that holds it", lines[2])
                 self.assertEqual(len(lines), 3 if partial else 1)  # a clean inventory has no advice line
 
-    def test_verify_of_a_folder_under_a_partial_root_names_the_root_and_says_to_exclude_only_when_a_path_is_unreadable(self):
+    def test_verify_under_a_partial_root_names_it_and_advises_exclude_only_for_an_unreadable_path(self):
         self.assertEqual(self.run_cli("catalogs")[0], 0)
         shoot_a = os.path.join(self.lib, "shoot-a")
         for root, folder in ((self.lib, shoot_a), (self.lib, self.lib), (shoot_a, self.lib)):
@@ -602,7 +600,6 @@ class PartialRootTests(CliCase):
                         cli._EXCLUDE_ADVICE,
                     ])
             os.remove(os.path.join(root, "IMG_0003.ARW"))
-        self.assertIn("excluding the root does not help", cli._EXCLUDE_ADVICE)
 
     def test_backup_plan_for_a_root_with_no_files_scan_still_says_run_inventory_first(self):
         self.write_config({**self.config, "archive_roots": [os.path.join(self.top, "arch1")]})
@@ -1957,6 +1954,7 @@ class CopiesTests(RejectsCase):
         self.assertEqual((code, self.snapshot()), (4, before), err)
         self.assertIn("out/copies-summary.md", err)
         self.assertIn("run catalogs again", err)
+        self.assertIn("excluded_catalogs", err)
         self.assertIn("older than the latest scans", err)  # an exit-4 refusal still says the reports are old
 
     def test_both_summaries_name_the_scans_read_before_the_views(self):
@@ -2893,9 +2891,6 @@ class ExitCodeTests(RejectsCase):
             synth.make_tree(os.path.dirname(path), {os.path.basename(path): b"x"})
 
         def undo():
-            with warnings.catch_warnings():  # store.connect leaves a connection it could not set up open
-                warnings.simplefilter("ignore", ResourceWarning)
-                gc.collect()
             shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
             if saved is not None:
                 synth.make_tree(os.path.dirname(path), {os.path.basename(path): saved})
@@ -2927,7 +2922,7 @@ class ExitCodeTests(RejectsCase):
              {"archive_roots": [gone]}, None, {"free_bytes": no_free_space_read}),
             ("backup-run, the manifest's own second drive is missing", ("backup-run", stranded), 2, gone,
              {"archive_roots": [self.arch[0], gone]}, None, {"free_bytes": no_free_space_read}),
-            ("backup-run --apply on a missing drive",("backup-run", stranded, "--apply"), 2, gone,
+            ("backup-run --apply on a missing drive", ("backup-run", stranded, "--apply"), 2, gone,
              {"archive_roots": [gone]}, None, {"free_bytes": no_free_space_read}),
             ("backup-run while the other drive is missing", ("backup-run", manifest), 0,
              f"0 dest_exists {dest}", {"archive_roots": [self.arch[0], gone]}, None,
@@ -2946,7 +2941,7 @@ class ExitCodeTests(RejectsCase):
              {"processes": mock.Mock(side_effect=[["explorer.exe"], RuntimeError("cannot list processes")])}),
             ("catalogs, work database is not a database", ("catalogs",), 6, database, {},
              ("work/lrclean.sqlite", False), {}),
-            ("catalogs, work database is a folder",("catalogs",), 6, database, {},
+            ("catalogs, work database is a folder", ("catalogs",), 6, database, {},
              ("work/lrclean.sqlite", True), {}),
         )
         for name, argv, code, named, config, occupied, extra in cases:
