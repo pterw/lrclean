@@ -242,7 +242,7 @@ def _sidecar_keys(files, views) -> frozenset:
 def build(files, views, evidence, hashes, purged: Purged, *, photo_root: str, coverage, stat=os.stat,
           attrs_of=None, hasher=hashing.full_hash) -> Built:
     if not coverage.complete:
-        raise Incomplete("catalog coverage is incomplete: " + "; ".join(coverage.limiting))
+        raise Incomplete("run catalogs again: catalog coverage is incomplete: " + "; ".join(coverage.limiting))
     recording = [v for v in views if v.role in _RECORDING_ROLES and v.status in ("ok", "partial") and not v.excluded]
     w = _World(views, recording, [v for v in views if v.role == "live"], [v for v in views if v.role == "shoot"],
                evidence, hashes, purged, photo_root, _sidecar_keys(files, views), _Stat(stat), attrs_of, hasher)

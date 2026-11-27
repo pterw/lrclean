@@ -99,19 +99,25 @@ class ConfigTests(CliCase):
         self.assertTrue(os.path.isdir("cats"))  # the relative path exists, so only the check refuses it
         spellings = {
             "relative path": "cats",
+            "drive-relative path": os.path.splitdrive(self.lib)[0] + "shoot-a",
+            "doubled trailing separator": self.lib + "\\\\",
+            "doubled interior separator": self.lib + "/shoot-a//other",
+            "extended path with forward slashes": "\\\\?\\" + self.lib.replace("\\", "/"),
             "dot segment": self.lib + "/shoot-a/..",
             "lone dot segment": self.lib + "/.",
             "dot segment between backslashes": self.lib + "\\shoot-a\\..\\x",
             "lone dot between backslashes": self.lib + "\\.\\x",
             "tab inside an absolute path": os.path.join(self.lib, "x\ty"),
             "newline inside an absolute path": os.path.join(self.lib, "x\ny"),
+            "unit separator inside an absolute path": os.path.join(self.lib, "x\x1fy"),
         }
-        for name in ("tab inside an absolute path", "newline inside an absolute path"):
-            self.assertTrue(os.path.isabs(spellings[name]))  # absolute, so only the control check refuses it
+        controls = ("tab", "newline", "unit separator")
+        for name in controls:
+            self.assertTrue(os.path.isabs(spellings[f"{name} inside an absolute path"]))
         for key in (*cli.LIST_KEYS, "photo_root", "live_catalog"):
             for name, item in spellings.items():
                 change = {key: [item] if key in cli.LIST_KEYS else item}
-                fix = ["forward slashes"] if name.startswith(("tab", "newline")) else []  # the message gives the fix
+                fix = ["forward slashes"] if name.startswith(controls) else []
                 self.refused(f"{key}: {name}", key, change, [repr(item), *fix])
 
     def test_a_nested_pair_or_a_shared_folder_is_refused_in_any_spelling_and_names_both_entries(self):
@@ -120,6 +126,7 @@ class ConfigTests(CliCase):
         in_cats = os.path.join(self.cats, "a")
         slashed = nested.replace("\\", "/")
         upper = nested.upper()  # the whole child in capitals, so its start differs in case from the parent's
+        photo_root = self.base.replace("\\", "/").upper() + "/stray"
         self.assertNotEqual(nested, upper)
         self.assertNotEqual(nested, slashed)
         cases = {
@@ -145,6 +152,8 @@ class ConfigTests(CliCase):
             "photo root is the base": ("photo_root", {"photo_root": self.base}, [self.base, "outside"]),
             "photo root inside the base": ("photo_root", {"photo_root": os.path.join(self.base, "stray")},
                                            [os.path.join(self.base, "stray"), self.base, "outside"]),
+            "photo root inside the base in another case and slash": (
+                "photo_root", {"photo_root": photo_root}, [photo_root, self.base, "outside"]),
         }
         os.makedirs(in_cats)
         for name, (key, change, named) in cases.items():
@@ -155,6 +164,8 @@ class ConfigTests(CliCase):
         drive = os.path.splitdrive(self.lib)[0] + "\\"
         cases = {
             "forward slashes": {"library_roots": [self.lib.replace("\\", "/")]},
+            "UNC prefix": {"catalog_roots": [r"\\server\share\cats"]},
+            "extended prefix": {"library_roots": ["\\\\?\\" + self.lib]},
             "trailing separator": {"library_roots": [self.lib + os.sep]},
             "other letter case": {"library_roots": [self.lib.upper()]},
             "catalog root inside a library root": {"catalog_roots": [os.path.join(self.lib, "cats")]},
@@ -432,33 +443,33 @@ class PartialRootTests(CliCase):
 
     def test_inventory_names_the_partial_root_and_folder_and_backup_plan_names_the_cause(self):
         self.assertEqual(self.run_cli("catalogs")[0], 0)
-        for folder, excluded, advice in (
-            (os.path.join(self.lib, "shoot-a"), [], "to exclude in work/config.json"),
-            (self.lib, [self.lib], "For a root you cannot list or a file directly in a root, "
-             "make it readable or remove the root from the config"),
-        ):
-            with self.subTest(folder=os.path.basename(folder)):
-                self.write_config({**self.config, "archive_roots": [os.path.join(self.top, "arch1")],
-                                   "exclude": excluded})
-                self.assertEqual(self.run_cli("inventory", scandir=self.unlistable(folder)), (0, ""))
-                lines = self.stdout.splitlines()
-                self.assertEqual(lines[0], "files scans stored: 2")
-                self.assertEqual(lines[1], f"partial root {self.lib}: could not read {folder}")
-                self.assertIn(advice, lines[2])
-                self.assertEqual(len(lines), 3)  # the complete backup root is not named
-                code, err = self.run_cli("backup-plan", volume_of=lambda p: p)
-                self.assertEqual(code, 4)
-                self.assertIn(self.lib, err)
-                self.assertIn(advice, err)
-                self.assertNotIn("run inventory first", err)
+        folder = os.path.join(self.lib, "shoot-a")
+        self.write_config({**self.config, "archive_roots": [os.path.join(self.top, "arch1")]})
+        self.assertEqual(self.run_cli("inventory", scandir=self.unlistable(folder)), (0, ""))
+        partial = f"partial root {self.lib}: could not read {folder}"
+        self.assertEqual(self.stdout.splitlines(), ["files scans stored: 2", partial, cli._EXCLUDE_ADVICE])
+        code, err = self.run_cli("backup-plan", volume_of=lambda p: p)
+        self.assertEqual(code, 4)
+        self.assertIn(partial, err)
+        self.assertIn(cli._EXCLUDE_ADVICE, err)
+        self.assertNotIn("run inventory first", err)
 
     def test_every_partial_root_of_the_run_gets_its_own_line(self):
         self.assertEqual(self.run_cli("catalogs")[0], 0)
-        lib_shoot, backup_x = os.path.join(self.lib, "shoot-a"), os.path.join(self.backup, "x")
+        a, b = (os.path.join(self.lib, name) for name in ("shoot-a", "shoot-b"))
+        os.makedirs(b)
+        backup_x = os.path.join(self.backup, "x")
+        unlistable = self.unlistable(a, b, backup_x)
+
+        @contextlib.contextmanager
+        def scandir(path):
+            with unlistable(path) as entries:
+                yield sorted(entries, key=lambda entry: entry.name)
+
         self.assertNotEqual(self.lib, self.backup)
-        self.assertEqual(self.run_cli("inventory", scandir=self.unlistable(lib_shoot, backup_x)), (0, ""))
+        self.assertEqual(self.run_cli("inventory", scandir=scandir), (0, ""))
         lines = self.stdout.splitlines()
-        self.assertEqual(lines[1:3], [f"partial root {self.lib}: could not read {lib_shoot}",
+        self.assertEqual(lines[1:3], [f"partial root {self.lib}: could not read {a}; {b}",
                                       f"partial root {self.backup}: could not read {backup_x}"])
         self.assertEqual(len(lines), 4)  # the count, the two roots, the advice once
 
@@ -482,20 +493,39 @@ class PartialRootTests(CliCase):
                 self.assertEqual(lines[0], "files scans stored: 2")
                 if partial:
                     self.assertEqual(lines[1], f"partial root {self.lib}: could not read {unreadable}")
-                    self.assertIn("the folder that holds it", lines[2])
+                    self.assertIn("for a file in a subfolder, the folder that holds it", lines[2])
                 self.assertEqual(len(lines), 3 if partial else 1)  # a clean inventory has no advice line
 
     def test_verify_of_a_folder_under_a_partial_root_names_the_root_and_says_to_exclude(self):
         self.assertEqual(self.run_cli("catalogs")[0], 0)
-        self.assertEqual(self.run_cli("inventory", scandir=self.unlistable_shoot_a())[0], 0)
-        folder = os.path.join(self.lib, "shoot-a")
-        code, err = self.run_cli("verify", folder)
-        self.assertEqual(code, 4)
-        self.assertTrue(err.startswith(f"verify stopped: no raw file under {folder} is in the latest files scans, "
-                                       "and its root is partial\n"), err)
-        self.assertIn(f"partial root {self.lib}", err)
-        self.assertIn("exclude", err)
-        self.assertNotIn("run inventory first", err)
+        shoot_a = os.path.join(self.lib, "shoot-a")
+        for root, folder in ((self.lib, shoot_a), (self.lib, self.lib), (shoot_a, self.lib)):
+            with self.subTest(root=root, folder=folder):
+                self.write_config({**self.config, "library_roots": [root]})
+                self.assertEqual(self.run_cli("inventory", scandir=self.unlistable(shoot_a))[0], 0)
+                code, err = self.run_cli("verify", folder)
+                self.assertEqual(code, 4)
+                self.assertTrue(err.startswith(f"verify stopped: no raw file under {folder} is in the latest "
+                                               "files scans.\n"), err)
+                self.assertIn(f"partial root {root}: could not read {shoot_a}", err)
+                self.assertIn(cli._EXCLUDE_ADVICE, err)
+                self.assertNotIn("run inventory first", err)
+
+        self.write_config(self.config)
+        for status in ("partial", "running"):
+            with self.subTest(status=status):
+                conn = store.connect(os.path.join(self.base, "work", "lrclean.sqlite"))
+                try:
+                    scan_id = store.begin_scan(conn, self.lib, "files", now=lambda: NOW)
+                    if status == "partial":
+                        store.finish_scan(conn, scan_id, status, now=lambda: NOW)
+                finally:
+                    conn.close()
+                code, err = self.run_cli("verify", shoot_a)
+                self.assertEqual(code, 4)
+                self.assertIn(f"partial root {self.lib}: the scan did not finish. Run inventory again.", err)
+                self.assertNotIn("could not read", err)
+                self.assertNotIn("exclude", err)
 
     def test_verify_of_a_folder_under_a_complete_root_names_no_partial_root(self):
         lib2 = os.path.join(self.top, "lib2")
@@ -522,26 +552,31 @@ class PartialRootTests(CliCase):
 
     def test_a_file_directly_in_a_root_is_not_cured_by_excluding_the_root_and_the_advice_says_so(self):
         real = os.stat
+
+        def stat(path, *args, **kwargs):
+            if os.path.basename(path) == "IMG_0003.ARW":
+                raise PermissionError(path)
+            return real(path, *args, **kwargs)
+
         self.assertEqual(self.run_cli("catalogs")[0], 0)
         for root in (self.lib, self.backup):
-            with self.subTest(root=os.path.basename(root)):
-                stray = os.path.join(root, "IMG_0003.ARW")
-                synth.make_tree(root, {"IMG_0003.ARW": b"c" * 100})
-
-                def stat(path, *args, **kwargs):
-                    if str(path).endswith(stray):
-                        raise PermissionError(path)
-                    return real(path, *args, **kwargs)
-
-                self.write_config({**self.config, "exclude": [root]})
-                with mock.patch.object(os, "stat", stat):
-                    self.assertEqual(self.run_cli("inventory"), (0, ""))
-                lines = self.stdout.splitlines()
-                self.assertEqual(lines[1], f"partial root {root}: could not read {stray}")
-                self.assertIn("a file directly in a root, make it readable or remove the root from the config",
-                              lines[2])
-                self.assertIn("move the file to a subfolder and exclude that folder", lines[2])
-                self.assertEqual(len(lines), 3)
+            synth.make_tree(root, {"IMG_0003.ARW": b"c" * 100})
+            self.write_config({**self.config, "exclude": [root]})
+            for kind in ("file", "unlistable"):
+                with self.subTest(root=os.path.basename(root), kind=kind):
+                    if kind == "file":
+                        with mock.patch.object(os, "stat", stat):
+                            self.assertEqual(self.run_cli("inventory"), (0, ""))
+                        unreadable = os.path.join(root, "IMG_0003.ARW")
+                    else:
+                        self.assertEqual(self.run_cli("inventory", scandir=self.unlistable(root)), (0, ""))
+                        unreadable = root
+                    self.assertEqual(self.stdout.splitlines(), [
+                        "files scans stored: 2", f"partial root {root}: could not read {unreadable}",
+                        cli._EXCLUDE_ADVICE,
+                    ])
+            os.remove(os.path.join(root, "IMG_0003.ARW"))
+        self.assertIn("Excluding the root does not help", self.stdout)
 
     def test_backup_plan_for_a_root_with_no_files_scan_still_says_run_inventory_first(self):
         self.write_config({**self.config, "archive_roots": [os.path.join(self.top, "arch1")]})
@@ -720,10 +755,19 @@ class WiringTests(CliCase):
     def test_catalogs_prints_each_catalog_unreadable_in_this_run_and_why_and_none_from_an_earlier_run(self):
         earlier = os.path.join(self.cats, "bad.lrcat")
         synth.make_unreadable(earlier)
+        other = os.path.join(self.top, "other")
+        os.makedirs(other)
+        self.write_config({**self.config, "catalog_roots": [self.cats, other]})
         self.assertEqual(self.run_cli("catalogs")[0], 0)
         first = self.stdout.splitlines()
         self.assertEqual(len(first), 2)
         self.assertTrue(first[1].startswith(f"unreadable: {earlier}: SQLite cannot read"))
+
+        self.write_config({**self.config, "catalog_roots": [other]})
+        self.assertEqual(self.run_cli("catalogs")[0], 0)
+        self.assertNotIn("unreadable:", self.stdout)
+
+        self.write_config(self.config)
         os.remove(earlier)  # gone in the second run, which holds two unreadable catalogs for different reasons
         garbage, unlucky = os.path.join(self.cats, "ugly.lrcat"), os.path.join(self.cats, "worse.lrcat")
         synth.make_unreadable(garbage)
@@ -809,16 +853,22 @@ class WiringTests(CliCase):
                 self.assertEqual(classify.NOT_RECORDED in rows[0]["how_decided"], expected)
 
     def test_base_that_is_a_root_is_refused_before_anything_is_created(self):
+        original_base = self.base
+        self.addCleanup(setattr, self, "base", original_base)
+        for base, root in ((self.lib, self.lib), (self.backup, self.backup), (self.cats, self.cats),
+                           (original_base, os.path.join(original_base, "stray"))):
+            with self.subTest(base=base, root=root):
+                self.base = base
+                self.write_config({**self.config, **({"catalog_roots": [root]} if root != base else {})})
+                for step in ("catalogs", "report"):
+                    code, err = self.run_cli(step)
+                    self.assertEqual(code, 2)
+                    self.assertIn("root", err)
+                    self.assertIn(root, err)
+                self.assertEqual(sorted(os.listdir(os.path.join(base, "work"))), ["config.json"])
+                self.assertFalse(os.path.exists(self.out_dir()))
+
         self.base = self.lib
-        self.write_config(self.config)
-        for step in ("catalogs", "report"):
-            code, err = self.run_cli(step)
-            self.assertEqual(code, 2)
-            self.assertIn(self.lib, err)
-        self.assertEqual(sorted(os.listdir(os.path.join(self.lib, "work"))), ["config.json"])
-        self.assertFalse(os.path.exists(self.out_dir()))
-        # the comparison is normalised: any spelling of the base is still the base
-        # (a relative or dot-dot spelling is refused earlier, by the configuration refusals)
         spellings = {"trailing separator": self.lib + os.sep}
         if os.name == "nt":
             spellings["other case"] = self.lib.upper()
@@ -828,8 +878,10 @@ class WiringTests(CliCase):
                 self.write_config({**self.config, "library_roots": [spelled]})
                 code, err = self.run_cli("catalogs")
                 self.assertEqual(code, 2)
-                self.assertIn("the base folder is the root", err)
+                self.assertIn("library_roots", err)
+                self.assertIn(spelled, err)
                 self.assertFalse(os.path.exists(self.out_dir()))
+        self.base = original_base
 
 
 class BackupPlanTests(CliCase):
@@ -1872,6 +1924,7 @@ class CopiesTests(RejectsCase):
         code, err = self.go()
         self.assertEqual((code, self.snapshot()), (4, before), err)
         self.assertIn("out/copies-summary.md", err)
+        self.assertIn("run catalogs again", err)
         self.assertIn("older than the latest scans", err)  # an exit-4 refusal still says the reports are old
 
     def test_both_summaries_name_the_scans_read_before_the_views(self):
@@ -2823,6 +2876,12 @@ class ExitCodeTests(RejectsCase):
         gone = self.missing_drive()
         stranded = os.path.join(self.top, "stranded-manifest.csv")
         source = os.path.join(self.lib, "shoot-a", "IMG_0001.ARW")
+        dest = os.path.join(self.arch[0], "shoot-a", "IMG_0001.ARW")
+        database = os.path.join(self.base, "work", "lrclean.sqlite")
+
+        def no_free_space_read(root):
+            self.fail(f"free space requested for {root}")
+
         backup_plan.write_manifest(stranded, [backup_plan.Row(
             source, os.path.join(gone, "shoot-a", "IMG_0001.ARW"), 100, os.stat(source).st_mtime_ns, "copy", "")])
         cases = (
@@ -2830,9 +2889,12 @@ class ExitCodeTests(RejectsCase):
             ("backup-plan, only the second root on a missing drive", ("backup-plan",), 2, gone,
              {"archive_roots": [self.arch[0], gone]}, None, {}),
             ("backup-run on a missing drive", ("backup-run", stranded), 2, gone,
-             {"archive_roots": [gone]}, None, {}),
+             {"archive_roots": [gone]}, None, {"free_bytes": no_free_space_read}),
             ("backup-run --apply on a missing drive", ("backup-run", stranded, "--apply"), 2, gone,
-             {"archive_roots": [gone]}, None, {}),
+             {"archive_roots": [gone]}, None, {"free_bytes": no_free_space_read}),
+            ("backup-run while the other drive is missing", ("backup-run", manifest), 0,
+             f"0 dest_exists {dest}", {"archive_roots": [self.arch[0], gone]}, None,
+             {"free_bytes": {self.arch[0]: 1000}.__getitem__}),
             ("backup-run --apply, journal folder is a file", ("backup-run", manifest, "--apply"), 6,
              "journal", {}, ("work/journal", False), {}),
             ("backup-verify, list is a folder", ("backup-verify", manifest), 6,
@@ -2843,6 +2905,10 @@ class ExitCodeTests(RejectsCase):
              {"processes": catalogs.running_processes, "error": subprocess.CalledProcessError(1, "tasklist")}),
             ("catalogs, tasklist times out", ("catalogs",), 3, "cannot list processes", {}, None,
              {"processes": catalogs.running_processes, "error": subprocess.TimeoutExpired("tasklist", 30)}),
+            ("catalogs, tasklist fails before snapshot", ("catalogs",), 3, "cannot list processes", {}, None,
+             {"processes": mock.Mock(side_effect=[["explorer.exe"], RuntimeError("cannot list processes")])}),
+            ("catalogs, work database is a folder", ("catalogs",), 6, database, {},
+             ("work/lrclean.sqlite", True), {}),
         )
         for name, argv, code, named, config, occupied, extra in cases:
             with self.subTest(name):
@@ -2853,13 +2919,18 @@ class ExitCodeTests(RejectsCase):
                 before = self.listings()
                 injected = {"volume_of": lambda p: self.volumes.get(p, "z:")}
                 error = extra.get("error")
-                if "processes" in extra:
-                    injected["processes"] = extra["processes"]
-                with self.tasklist_fails(error) if error else contextlib.nullcontext():
-                    got, err = self.run_cli(*argv, **injected)
-                undo()
+                injected.update((key, value) for key, value in extra.items() if key != "error")
+                try:
+                    with self.tasklist_fails(error) if error else contextlib.nullcontext():
+                        got, err = self.run_cli(*argv, **injected)
+                finally:
+                    undo()
                 self.assertEqual(got, code, err)
-                self.assertIn(named, err)
+                if code == 0:
+                    self.assertEqual(err, "")
+                    self.assertEqual(self.stdout.splitlines(), [named])
+                else:
+                    self.assertIn(named, err)
                 self.assertNotIn("Traceback", err)
                 self.assertEqual(self.listings(), before)
 

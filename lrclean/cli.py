@@ -4,6 +4,7 @@ import argparse
 import json
 import ntpath
 import os
+import sqlite3
 import sys
 import time
 from collections import Counter
@@ -119,7 +120,12 @@ def _check_spelling(key: str, item: str) -> None:
                                "or use forward slashes")
     if not ntpath.isabs(item):
         raise ConfigError(key, f"{item!r} is not an absolute path")
-    if {".", ".."} & set(item.replace("\\", "/").split("/")):
+    if item.startswith("\\\\?\\") and "/" in item:
+        raise ConfigError(key, f"{item!r} holds a forward slash in an extended path")
+    spelling = item.replace("\\", "/")
+    if "//" in spelling[1:]:  # allow the leading pair in UNC and extended paths
+        raise ConfigError(key, f"{item!r} holds an empty path segment")
+    if {".", ".."} & set(spelling.split("/")):
         raise ConfigError(key, f"{item!r} holds a '.' or '..' segment")
 
 
@@ -169,11 +175,14 @@ def _catalogs(run: _Run) -> int:
         raise catalogs.LightroomRunning(str(exc)) from exc
     if any(name.startswith("lightroom") for name in names):
         raise catalogs.LightroomRunning("Lightroom is running: refusing to copy a catalog")
-    ids = catalogs.scan_catalogs(
-        run.conn, catalog_roots=run.cfg["catalog_roots"], own_dir=run.base,
-        exclude=_exclude(run), work_dir=os.path.join(run.base, "work"),
-        live_catalog=run.cfg["live_catalog"], old_states=run.cfg["old_states"],
-        processes=run.processes, now=run.now)
+    try:
+        ids = catalogs.scan_catalogs(
+            run.conn, catalog_roots=run.cfg["catalog_roots"], own_dir=run.base,
+            exclude=_exclude(run), work_dir=os.path.join(run.base, "work"),
+            live_catalog=run.cfg["live_catalog"], old_states=run.cfg["old_states"],
+            processes=run.processes, now=run.now)
+    except RuntimeError as exc:
+        raise catalogs.LightroomRunning(str(exc)) from exc
     latest = _latest_catalogs(run.conn)
     bad = sum(1 for c in latest if c["status"] in ("unreadable", "partial"))
     print(f"catalogs stored: {len(ids)} ({bad} unreadable or partial)")
@@ -195,26 +204,34 @@ def _inventory(run: _Run) -> int:
     except ValueError as exc:
         raise ConfigError("library_roots, backup_roots", str(exc)) from exc
     print(f"files scans stored: {len(ids)}")
-    partial = _partial_lines(run, _scan_roots(run))
-    if partial:
-        print("\n".join([*partial, _EXCLUDE_ADVICE]))
+    for line in _partial_lines(run, _scan_roots(run)):
+        print(line)
     return OK
 
 
 _EXCLUDE_ADVICE = ("Add an unreadable subfolder (for a file in a subfolder, the folder that holds it) "
-                   "to exclude in work/config.json. For a root you cannot list or a file directly in a root, "
-                   "make it readable or remove the root from the config. You can also move the file to a "
-                   "subfolder and exclude that folder. Run inventory again.")
+                   "to exclude in work/config.json. Excluding the root does not help. Make an unlistable root "
+                   "or a file directly in a root readable, move the file to an excluded subfolder, or remove "
+                   "the root from the config. Run inventory again.")
 
 
 def _partial_lines(run: _Run, roots: list[str]) -> list[str]:
-    """One line per partial root among `roots`: the root and the folders or files it could not read."""
+    """Explain each partial root and give exclude advice if a path could not be read."""
     lines = []
+    advise_exclude = False
     for state in classify.root_states(run.conn, roots):
-        if state.status == "partial":
-            rows = run.conn.execute('SELECT path_orig FROM "file" WHERE scan_id = ? AND ext = ? ORDER BY id',
-                                    (state.scan_id, inventory.UNREADABLE))
-            lines.append(f"partial root {state.root}: could not read " + "; ".join(r["path_orig"] for r in rows))
+        if state.status != "partial":
+            continue
+        rows = run.conn.execute('SELECT path_orig FROM "file" WHERE scan_id = ? AND ext = ? ORDER BY id',
+                                (state.scan_id, inventory.UNREADABLE))
+        unreadable = "; ".join(row["path_orig"] for row in rows)
+        if unreadable:
+            lines.append(f"partial root {state.root}: could not read {unreadable}")
+            advise_exclude = True
+        else:
+            lines.append(f"partial root {state.root}: the scan did not finish. Run inventory again.")
+    if advise_exclude:
+        lines.append(_EXCLUDE_ADVICE)
     return lines
 
 
@@ -235,11 +252,12 @@ def _verify(run: _Run) -> int:
             run.conn, folder, library_roots=run.cfg["library_roots"],
             backup_roots=run.cfg["backup_roots"], stat=run.stat, now=run.now)
     except backups.NoRawUnder as exc:
-        holders = [root for root in run.cfg["library_roots"] if backup_plan.is_inside(folder, root)]
-        partial = _partial_lines(run, holders)
-        if partial:  # running inventory again cannot cure this: the root has to be made readable
-            why = f"verify stopped: no raw file under {folder} is in the latest files scans, and its root is partial"
-            raise StepMissing("\n".join([why, *partial, _EXCLUDE_ADVICE])) from exc
+        related = [root for root in run.cfg["library_roots"]
+                   if backup_plan.is_inside(folder, root) or backup_plan.is_inside(root, folder, below_only=True)]
+        partial = _partial_lines(run, related)
+        if partial:
+            why = f"verify stopped: no raw file under {folder} is in the latest files scans."
+            raise StepMissing("\n".join([why, *partial])) from exc
         raise StepMissing(f"run inventory first: no raw file under {folder} is in the latest files scans") from exc
     print(", ".join(f"{name}={n}" for name, n in counts.items()))
     return OK
@@ -258,13 +276,17 @@ def _require_archive_roots(run: _Run) -> list[str]:
     return roots
 
 
+def _require_connected_drive(run: _Run, root: str) -> None:
+    anchor = os.path.splitdrive(os.path.abspath(root))[0]
+    if anchor and not run.exists(anchor + "\\"):
+        raise ConfigError("archive_roots", f"the drive of {root} is not connected")
+
+
 def _require_connected(run: _Run) -> list[str]:
     """The archive roots, each on a drive that is connected (its free space cannot be read otherwise)."""
     roots = _require_archive_roots(run)
     for root in roots:
-        anchor = os.path.splitdrive(os.path.abspath(root))[0]
-        if anchor and not run.exists(anchor + "\\"):
-            raise ConfigError("archive_roots", f"the drive of {root} is not connected")
+        _require_connected_drive(run, root)
     return roots
 
 
@@ -276,11 +298,9 @@ def _backup_plan(run: _Run) -> int:
             archive_roots=roots, own_dir=run.base, exclude=_exclude(run), attrs_of=run.attrs_of,
             stat=run.stat, free_bytes=run.free_bytes)
     except backup_plan.ManifestError as exc:
-        states = classify.root_states(run.conn, run.cfg["library_roots"])
-        partial = [s.root for s in states if s.status == "partial"]
+        partial = _partial_lines(run, run.cfg["library_roots"])
         if partial:  # the only ManifestError of plan_manifests is "no library root has a complete files scan"
-            raise StepMissing(f"no library root has a complete files scan: the latest scan of {', '.join(partial)} "
-                              f"is partial; {_EXCLUDE_ADVICE}") from exc
+            raise StepMissing(f"{exc}. " + "\n".join(partial)) from exc
         raise StepMissing(f"run inventory first: {exc}") from exc
     written = backup_plan.write_plan(os.path.join(run.base, "out"), plan)
     for root, path in zip(plan.roots, written):
@@ -298,10 +318,15 @@ def _manifest_rows(run: _Run, check) -> tuple[list, int]:
 
 
 def _backup_run(run: _Run) -> int:
-    roots = _require_connected(run)
-    rows, n = _manifest_rows(run, lambda rows: backup.check_manifest(
-        rows, archive_roots=roots, library_roots=run.cfg["library_roots"],
-        free_bytes=run.free_bytes, exists=run.exists))
+    roots = _require_archive_roots(run)
+
+    def check(rows):
+        n = backup_plan.archive_index(rows, roots)
+        _require_connected_drive(run, roots[n - 1])
+        return backup.check_manifest(rows, archive_roots=roots, library_roots=run.cfg["library_roots"],
+                                     free_bytes=run.free_bytes, exists=run.exists)
+
+    rows, n = _manifest_rows(run, check)
     journal_dir = os.path.join(run.base, "work", "journal")
     if not run.args.apply:
         verdicts = backup.dry_run(rows, journal_dir=journal_dir, n=n, stat=run.stat,
@@ -930,21 +955,27 @@ def main(argv: list[str] | None = None, *, processes=catalogs.running_processes,
         cfg = load_config(os.path.join(base, "work", "config.json"))
     except ConfigError as exc:
         return _fail(CONFIG_ERROR, f"configuration error: {exc}")
-    for root in (*cfg["library_roots"], *cfg["backup_roots"], *cfg["catalog_roots"]):
-        if paths.norm(os.path.abspath(root)) == paths.norm(base):  # a root's own entry is never pruned
-            return _fail(CONFIG_ERROR, f"configuration error: the base folder is the root {root}")
+    for key in ("library_roots", "backup_roots", "catalog_roots"):
+        for root in cfg[key]:
+            if backup_plan.is_inside(root, base):
+                return _fail(CONFIG_ERROR, f"configuration error: {key}: root {root} is the tool folder "
+                                           f"or lies inside it ({base})")
     if backup_plan.is_inside(cfg["photo_root"], base):
         return _fail(CONFIG_ERROR, f"configuration error: photo_root: {cfg['photo_root']!r} is the tool "
                                    "folder or lies inside it; move the tool folder "
                                    f"{base!r} outside the photo folder")
-    conn = None if args.command in _NO_DATABASE else store.connect(
-        os.path.join(base, "work", "lrclean.sqlite"))
-    run = _Run(args, cfg, conn, base, processes, now, stat, attrs_of, exists, volume_of, free_bytes,
-               clock, opener, writer, rename, abort, scandir,
-               mover_seams.Seams(stat, attrs_of, is_link, opener, rename, remove, rmdir, makedirs, listdir,
-                                 append, write, clock, abort, now), [])
+    db_path = os.path.join(base, "work", "lrclean.sqlite")
+    conn = None
     try:
+        if args.command not in _NO_DATABASE:
+            conn = store.connect(db_path)
+        run = _Run(args, cfg, conn, base, processes, now, stat, attrs_of, exists, volume_of, free_bytes,
+                   clock, opener, writer, rename, abort, scandir,
+                   mover_seams.Seams(stat, attrs_of, is_link, opener, rename, remove, rmdir, makedirs, listdir,
+                                     append, write, clock, abort, now), [])
         return _COMMANDS[args.command](run)
+    except sqlite3.DatabaseError as exc:
+        return _fail(HELD, f"{args.command} stopped on a database error at {db_path} ({exc})")
     except OSError as exc:  # a file of the tool folder that cannot be written (the movers say more)
         return _fail(HELD, f"{args.command} stopped on an error ({exc})")
     except ConfigError as exc:

@@ -66,11 +66,15 @@ before the backup phase):
 }
 ```
 
-A whole system drive has folders that a user without administrator rights cannot list. `inventory` names any other
-folder or file it could not read. Add an unreadable subfolder (for a file in a subfolder, the folder that holds it)
-to `exclude` in `work/config.json`. For a root you cannot list or a file directly in a root, make it readable or
-remove the root from the config. You can also move the file to a subfolder and exclude that folder. Run `inventory`
-again.
+A whole system drive has folders that a user without administrator rights cannot list. When `inventory` cannot
+read a path, it names the path and marks the root's scan partial. Add an unreadable subfolder (for a file in a
+subfolder, the folder that holds it) to `exclude` in `work/config.json`. Excluding the root does not help. Make
+an unlistable root or a file directly in a root readable, move the file to an excluded subfolder, or remove the
+root from the config. Run `inventory` again.
+
+`hash`, `verify` and the report's verdicts skip file rows from partial scans. `backup-plan` needs at least one
+complete library scan and walks `photo_root` directly. `rejects` selects rejects from the catalogs and uses hashes
+only from complete library scans when looking for twins.
 
 `--base` defaults to the current folder, so run from the tool folder or put `--base <tool folder>` before the
 command: `lrclean --base <tool folder> report`. Close Lightroom, then run the read-only report. It writes only inside
@@ -93,6 +97,7 @@ Each is its own phase; the step-by-step is in [the guide](docs/guide.md#the-proc
 
 1. **Report.** Reads every catalog it can find (from copies), walks the photo drive, hashes files and reports what each file is.
 2. **Backup.** Copies every photo and video folder to two archive drives from a list you approve, and verifies every copy.
+   `backup-plan` refuses if any archive drive is missing. `backup-run` refuses if its manifest's drive is missing.
 3. **Reject check.** After you cull in Lightroom, decides which rejects can safely leave and writes a removal list.
 4. **Unrecorded copies.** Lists byte-identical copies that no catalog records: a second removal list, in the same format.
 5. **Offload.** `stage` (a reversible move into a staging folder, with `undo`), then `purge` (a permanent delete, after everything is checked again).
