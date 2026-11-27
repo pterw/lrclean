@@ -1,3 +1,4 @@
+import contextlib
 import os
 import subprocess
 import tempfile
@@ -55,10 +56,10 @@ class AllowedTests(WorldCase):
             with self.subTest(kind=kind, case="bare"):
                 self.assertFalse(mover_seams.allowed(self.folders, "f", kind))
         inside = os.path.join(self.dirs["journal"], "f")
-        try:
-            relative = os.path.relpath(inside)
-        except ValueError:
-            self.skipTest("the temporary folder is on another drive than the working folder")
+        # Taken from the temporary folder, so the relative spelling exists even when the checkout is on another
+        # drive (issue #13); the working folder is restored before the temporary folder is removed.
+        self.enterContext(contextlib.chdir(os.path.dirname(self.dirs["journal"])))
+        relative = os.path.relpath(inside)
         self.assertFalse(os.path.isabs(relative))
         self.assertFalse(mover_seams.allowed(self.folders, relative, "journal"))
 

@@ -28,7 +28,7 @@ SECTIONS: dict[int, Section] = {
     s.number: s
     for s in (
         _section(1, "01_catalogs.csv", "Catalogs",
-                 "catalog, role, status, db_version, records, wal_bytes, has_lock, excluded_by_owner"),
+                 "catalog, role, status, reason, db_version, records, wal_bytes, has_lock, excluded_by_owner"),
         _section(2, "02_shoot_catalogs.csv", "Shoot catalogs",
                  "catalog, records_present, records_not_read, missing_moved, missing_same_name_only, "
                  "missing_nothing, root_folders, backup_same_name_only_lower_bound, "
@@ -117,7 +117,8 @@ def _coverage_block(coverage: Mapping) -> list[str]:
     lines += ["", "## Catalogs", ""]
     for cat in coverage["catalogs"]:
         flag = " (limits coverage)" if cat["limits_coverage"] else ""
-        lines.append(f"- {cat['catalog']}: {cat['status']}{flag}")
+        why = f": {cat['reason']}" if cat.get("reason") else ""
+        lines.append(f"- {cat['catalog']}: {cat['status']}{flag}{why}")
     if not coverage["catalogs"]:
         lines.append("- none")
     lines += ["", "## Limiting causes", ""]

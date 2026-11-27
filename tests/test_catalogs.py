@@ -1,3 +1,5 @@
+import contextlib
+import csv
 import hashlib
 import os
 import sqlite3
@@ -9,7 +11,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import synth
-from lrclean import catalogs, paths, store
+from lrclean import catalog_views, catalogs, paths, report, store
 
 NONE_RUNNING = lambda: []  # noqa: E731
 
@@ -146,11 +148,12 @@ class TestSnapshot(Tmp):
         synth.make_catalog(source, [])
         before = listing(os.path.dirname(source))
         home = os.path.dirname(source)
-        spellings = [home, os.path.join(home, "work"), os.path.join(home, "x", "..", "work")]
-        try:
-            spellings.append(os.path.relpath(os.path.join(home, "work")))
-        except ValueError:  # another drive than the current directory: no relative spelling
-            pass
+        # The relative spelling is taken from the temporary folder, so it exists even when the checkout is on
+        # another drive (issue #13); the working folder is restored before the temporary folder is removed.
+        self.enterContext(contextlib.chdir(os.path.dirname(home)))
+        spellings = [home, os.path.join(home, "work"), os.path.join(home, "x", "..", "work"),
+                     os.path.relpath(os.path.join(home, "work"))]
+        self.assertFalse(os.path.isabs(spellings[-1]))
         for work in spellings:
             with self.subTest(work=work):
                 with self.assertRaises(ValueError):
@@ -257,6 +260,63 @@ class TestSnapshot(Tmp):
         self.assertEqual(os.listdir(denied_work), [])
         self.assertEqual([tuple(r) for r in conn.execute("SELECT status, snapshot_path FROM catalog")],
                          [("unreadable", "")])
+
+    def make_pair(self):
+        """Two catalogs of different names and sizes; returns the sources of shoot-a and shoot-b."""
+        a, b = self.path("shoot-a", "main.lrcat"), self.path("shoot-b", "other.lrcat")
+        synth.make_catalog(a, [])
+        synth.make_catalog(b, [{"base": f"IMG_{n:04d}"} for n in range(400)])
+        self.assertNotEqual(os.path.basename(a), os.path.basename(b))
+        self.assertNotEqual(os.path.getsize(a), os.path.getsize(b))
+        return a, b
+
+    def test_a_catalog_that_vanishes_before_the_copy_is_unreadable_not_empty_issue_34(self):
+        a, b = self.make_pair()
+        calls = []
+
+        def vanishing(*_):
+            calls.append(1)
+            if len(calls) == 1:
+                os.rename(a, a + ".away")
+            return []
+
+        conn = self.conn()
+        try:
+            self.scan(conn, [self.tmp], processes=vanishing)
+        finally:
+            os.rename(a + ".away", a)
+        rows = {os.path.basename(os.path.dirname(s)): (st, reason) for s, st, reason in conn.execute(
+            "SELECT source_path, status, reason FROM catalog")}
+        self.assertEqual(rows["shoot-a"][0], "unreadable")
+        self.assertIn("copying the catalog failed", rows["shoot-a"][1])
+        self.assertEqual(rows["shoot-b"], ("ok", ""))
+
+    def test_a_wal_file_that_cannot_be_read_marks_that_catalog_and_the_scan_goes_on_issue_35(self):
+        a, b = self.make_pair()
+        with open(a + "-wal", "wb") as handle:
+            handle.write(b"x" * 10)
+
+        def denied_wal(path):
+            if path.replace("\\", "/").endswith("shoot-a/main.lrcat-wal"):
+                raise PermissionError("denied")
+            return os.stat(path)
+
+        def denied_size(path):
+            if path.replace("\\", "/").endswith("shoot-a/main.lrcat-wal"):
+                raise PermissionError("denied")
+            return os.stat(path).st_size
+
+        conn = self.conn()
+        # the size is read through `stat`; the getsize patch only fails a read that bypasses the seam
+        with mock.patch("os.path.getsize", denied_size):
+            ids = self.scan(conn, [self.tmp], stat=denied_wal)
+        self.assertEqual(len(ids), 2)
+        rows = {os.path.basename(os.path.dirname(s)): (st, reason) for s, st, reason in conn.execute(
+            "SELECT source_path, status, reason FROM catalog")}
+        self.assertEqual(rows["shoot-a"][0], "unreadable")
+        self.assertIn("main.lrcat-wal", rows["shoot-a"][1])
+        self.assertEqual(rows["shoot-b"], ("ok", ""))
+        self.assertEqual(conn.execute("SELECT status FROM scan").fetchone()[0], "complete")
 
     def test_lightroom_listed_refuses_before_copy_rule_6(self):
         source = self.path("a", "main.lrcat")
@@ -377,6 +437,9 @@ class TestStatuses(Tmp):
         got = {os.path.basename(r["source_path"]): r["status"] for r in conn.execute("SELECT * FROM catalog")}
         self.assertEqual(got, {"ok.lrcat": "ok", "partial.lrcat": "partial",
                                "empty.lrcat": "empty", "bad.lrcat": "unreadable"})
+        reasons = {os.path.basename(r["source_path"]): r["reason"] for r in conn.execute("SELECT * FROM catalog")}
+        self.assertEqual({k: v == "" for k, v in reasons.items()},
+                         {"ok.lrcat": True, "partial.lrcat": True, "empty.lrcat": True, "bad.lrcat": False})
         stored = [r["path_orig"] for r in conn.execute(
             "SELECT path_orig FROM record JOIN catalog ON catalog.id = catalog_id "
             "WHERE source_path LIKE '%ok.lrcat' AND via = 'absolute'")]
@@ -406,6 +469,98 @@ class TestStatuses(Tmp):
         self.assertEqual(self.read(source).status, "unreadable")
 
 
+UNREADABLE_REASONS = {  # case -> a phrase only that case's reason holds
+    "placeholder": "is an online-only placeholder",
+    "attributes": "main.lrcat-shm cannot be read",
+    "attributes_catalog": "main.lrcat cannot be read",
+    "snapshot_link": "with links resolved",
+    "work_inside": "work folder is inside",
+    "copy_failed": "copying the catalog failed",
+    "sqlite": "SQLite cannot read",
+}
+DENIED_TEXT = "denied\nagain"  # an OS error text holding a newline
+
+
+class TestUnreadableReasons(Tmp):
+    def build(self, name):
+        """One catalog in its own tree; returns (source, extra arguments for the scan)."""
+        home = os.path.join(self.tmp, name, "shoot-a")
+        source = self.path(name, "shoot-a", "main.lrcat")
+        work = os.path.join(self.tmp, name, "work")
+        os.makedirs(work)
+        if name == "sqlite":
+            synth.make_unreadable(source)
+        else:
+            synth.make_catalog(source, [])
+        extra = {"work_dir": work}
+
+        def denied_stat(ending):
+            def stat(path):
+                if path.replace("\\", "/").endswith(ending):
+                    raise PermissionError(DENIED_TEXT)
+                return os.stat(path)
+            return stat
+
+        if name == "placeholder":
+            extra["stat"] = placeholder_stat(f"{name}/shoot-a/main.lrcat")
+        elif name == "attributes":
+            extra["stat"] = denied_stat("shoot-a/main.lrcat-shm")
+        elif name == "attributes_catalog":
+            extra["stat"] = denied_stat("shoot-a/main.lrcat")
+        elif name == "work_inside":
+            extra["work_dir"] = os.path.join(home, "w")
+        elif name == "snapshot_link":
+            digest = hashlib.sha1(paths.norm(source).encode("utf-8")).hexdigest()[:12]
+            link = os.path.join(work, "catalogs", f"main-{digest}")
+            os.makedirs(os.path.dirname(link))
+            made = subprocess.run(["cmd", "/c", "mklink", "/J", link, home], capture_output=True, text=True)
+            self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+            self.addCleanup(os.rmdir, link)  # the link only, never the target
+        return source, extra
+
+    def test_every_path_to_unreadable_records_its_reason_in_the_row_the_csv_and_the_summary(self):
+        conn = self.conn()
+        sources = {}
+        for name in UNREADABLE_REASONS:
+            source, extra = self.build(name)
+            sources[name] = source
+            if name == "copy_failed":
+                with mock.patch("shutil.copyfile", side_effect=OSError("disk full")):
+                    ids = self.scan(conn, [os.path.dirname(source)], **extra)
+            else:
+                ids = self.scan(conn, [os.path.dirname(source)], **extra)
+            self.assertEqual(len(ids), 1, name)
+        rows = {r["source_path"]: r for r in conn.execute("SELECT * FROM catalog")}
+        cat_rows = {r["catalog"]: r for r in catalog_views.catalog_inventory_rows(conn, excluded_catalogs=[])}
+        sections = {n: [] for n in report.SECTIONS}
+        sections[1] = list(cat_rows.values())
+        coverage = {"roots": [], "limiting": [], "generated": "g", "scans": [],
+                    "catalogs": [{"catalog": s, "status": rows[s]["status"], "reason": rows[s]["reason"],
+                                  "limits_coverage": True} for s in sources.values()]}
+        out = os.path.join(self.tmp, "out")
+        report.write_report(out, sections, coverage, {n: "x" for n in report.SECTIONS})
+        with open(os.path.join(out, "summary.md"), encoding="utf-8") as handle:
+            summary = handle.read().splitlines()
+        with open(os.path.join(out, "01_catalogs.csv"), encoding="utf-8-sig", newline="") as handle:
+            csv_rows = {r["catalog"]: r for r in csv.DictReader(handle)}
+        self.assertEqual(len({rows[s]["reason"] for s in sources.values()}), len(sources), "distinct reasons")
+        for name, source in sources.items():
+            with self.subTest(name):
+                reason = rows[source]["reason"]
+                self.assertEqual(rows[source]["status"], "unreadable")
+                self.assertIn(UNREADABLE_REASONS[name], reason)
+                self.assertIn("\n", DENIED_TEXT)
+                self.assertNotIn("\n", reason)  # one line, though the error text holds a newline
+                if name.startswith("attributes"):
+                    self.assertIn("denied again", reason)
+                for other, phrase in UNREADABLE_REASONS.items():
+                    if other != name:
+                        self.assertNotIn(phrase, reason)
+                self.assertEqual(csv_rows[source]["reason"], reason)
+                self.assertEqual(csv_rows[source]["status"], "unreadable")
+                self.assertIn(f"- {source}: unreadable (limits coverage): {reason}", summary)
+
+
 class TestRunningProcesses(unittest.TestCase):
     def test_names_are_lower_case_and_bounded_to_30_seconds_rule_6(self):
         done = subprocess.CompletedProcess(
@@ -427,16 +582,16 @@ class TestRunningProcesses(unittest.TestCase):
                 else:
                     patch = mock.patch("lrclean.catalogs.subprocess.run", return_value=failure)
                 with patch:
-                    with self.assertRaises((RuntimeError, subprocess.SubprocessError)):
+                    with self.assertRaises(RuntimeError):
                         catalogs.running_processes()
 
     def test_a_failing_tasklist_is_not_read_as_nothing_running_rule_6(self):
         def fake(*args, **kw):
             if kw.get("check"):
                 raise subprocess.CalledProcessError(1, "tasklist")
-            return subprocess.CompletedProcess([], 1, stdout="")
+            return subprocess.CompletedProcess([], 1, stdout='"x.exe","1"\n')
         with mock.patch("lrclean.catalogs.subprocess.run", side_effect=fake):
-            with self.assertRaises(subprocess.CalledProcessError):
+            with self.assertRaises(RuntimeError):
                 catalogs.running_processes()
 
 

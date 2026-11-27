@@ -9,7 +9,7 @@ from lrclean import paths
 TABLES: dict[str, tuple[str, ...]] = {
     "scan": ("id", "root", "kind", "started", "finished", "status"),
     "catalog": ("id", "scan_id", "source_path", "snapshot_path", "role", "status",
-                "size", "mtime_ns", "db_version", "wal_bytes", "has_lock"),
+                "size", "mtime_ns", "db_version", "wal_bytes", "has_lock", "reason"),
     "record": ("catalog_id", "path_norm", "path_orig", "via", "ext",
                "capture_time", "is_sidecar"),
     "catalog_root": ("catalog_id", "path_norm", "path_orig", "via"),
@@ -46,16 +46,20 @@ def connect(db_path: str) -> sqlite3.Connection:
     if folder:
         os.makedirs(folder, exist_ok=True)
     conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    for table, columns in TABLES.items():
-        conn.execute(_create_sql(table, columns))
-        have = {r["name"] for r in conn.execute(f'PRAGMA table_info("{table}")')}
-        for col in columns:
-            if col not in have:
-                conn.execute(f'ALTER TABLE "{table}" ADD COLUMN "{col}" {_kind(col)}')
-    conn.commit()
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        for table, columns in TABLES.items():
+            conn.execute(_create_sql(table, columns))
+            have = {r["name"] for r in conn.execute(f'PRAGMA table_info("{table}")')}
+            for col in columns:
+                if col not in have:
+                    conn.execute(f'ALTER TABLE "{table}" ADD COLUMN "{col}" {_kind(col)}')
+        conn.commit()
+    except BaseException:
+        conn.close()
+        raise
     return conn
 
 

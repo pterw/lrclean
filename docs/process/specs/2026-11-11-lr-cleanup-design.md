@@ -87,7 +87,8 @@ These tables cross tasks. A task that needs one changed returns NEEDS_CONTEXT.
 - `scan(id, root, kind, started, finished, status)`. `kind` is `files` or `catalogs`. `status` is `running`,
   `complete`, `partial` or `not_connected`.
 - `catalog(id, scan_id, source_path, snapshot_path, role, status, size, mtime_ns, db_version, wal_bytes,
-  has_lock)`. `role` is `live`, `old_state` or `shoot`. `status` is `ok`, `empty`, `partial` or `unreadable`.
+  has_lock, reason)`. `role` is `live`, `old_state` or `shoot`. `status` is `ok`, `empty`, `partial` or
+  `unreadable`. `reason` is one plain line saying why for an `unreadable` catalog, and empty otherwise (0.1.1).
 - `catalog_root(catalog_id, path_norm, path_orig, via)`: each root folder a catalog records, by its absolute
   path and by its catalog-relative path.
 - `record(catalog_id, path_norm, path_orig, via, ext, capture_time, is_sidecar)`. `via` is `absolute` or

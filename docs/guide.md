@@ -38,7 +38,7 @@ scanned, staged from or backed up. Make it outside the photo folders.
 
 | Key | Meaning |
 |---|---|
-| `library_roots` | Folders on the system drive to inventory (the whole drive is fine) |
+| `library_roots` | Folders on the system drive to inventory (the whole drive is fine). Add `C:\System Volume Information` to `exclude` and see `exclude` for other paths `inventory` names as unreadable. |
 | `photo_root` | The folder you treat as the photo library; only files under it are backed up or offloaded |
 | `catalog_roots` | Folders searched for `.lrcat` files (every connected drive is fine) |
 | `backup_roots` | Folders on external drives that may already hold copies (read for the report) |
@@ -46,7 +46,7 @@ scanned, staged from or backed up. Make it outside the photo folders.
 | `live_catalog` | The path of your main catalog |
 | `old_states` | Older states or backup copies of the live catalog: they neither reject nor keep, but their develop work and picks still keep a photo |
 | `excluded_catalogs` | Catalogs whose records protect nothing (unreadable ones, or ones you judge irrelevant). `catalogs` still copies and reads them; only the verdicts ignore them. |
-| `exclude` | Folders never walked |
+| `exclude` | Folders skipped during walks. An unreadable path makes its root's scan `partial`: add the unreadable subfolder (for a file, the folder that holds it) here and run `inventory` again. Excluding a root does not help; `inventory` says what to do instead. |
 | `group_depth` | How many folder levels under `photo_root` make one group (a year folder) in the report |
 
 A catalog's role is always given here, never guessed from its name or folder.
@@ -54,6 +54,18 @@ A catalog's role is always given here, never guessed from its name or folder.
 The first nine keys (all but `archive_roots`) are required by every command. `archive_roots` is read only by
 `backup-plan`, `backup-run`, `backup-verify`, `rejects`, `copies`, `stage` and `purge`; add it before `backup-plan`.
 The report (`catalogs`, `inventory`, `hash`, `report`) runs without it.
+
+Every command checks the configuration before it runs and names the key on refusal (exit 2). Use absolute paths
+without `.` or `..` segments or control characters. Write each backslash twice in JSON or use forward slashes.
+Extended paths starting with `\\?\` require backslashes. Doubled separators are allowed only at the start of UNC and
+extended paths. A single trailing separator and another letter case are fine.
+
+Within `library_roots`, `backup_roots` or `catalog_roots`, keep only the outer folder of an overlapping pair. Library
+and backup roots must be separate. A catalog root inside a library root is fine for a whole-drive layout. The tool
+folder can sit inside a root. Place `library_roots`, `backup_roots`, `catalog_roots` and `photo_root` outside the tool folder.
+
+The tool folder must be on the same drive as the files `stage` moves: a file on another drive is held
+`other_volume` and stays where it is.
 
 ## Commands
 
@@ -65,7 +77,7 @@ Every command that changes something is a dry run unless given `--apply`.
 | Report | `inventory` | The files under `library_roots` and `backup_roots` | Rows in the work database |
 | Report | `hash` | Files that need a sample or full hash (resumable) | Rows in the work database |
 | Report | `report` | The work database | `out/01_catalogs.csv` to `out/11_not_read.csv` and `out/summary.md` |
-| Report | `verify <folder>` | One folder and its copies on the backup roots, in full | Rows in the work database |
+| Report | `verify <folder>` | The raw files of one folder (any spelling of it) and their copies on the backup roots, in full | Rows in the work database |
 | Backup | `backup-plan` | The tree under `photo_root` | `out/backup-manifest-<n>.csv` per archive root and a summary |
 | Backup | `backup-run <manifest> [--apply]` | The manifest you approved | Copies on the archive drive, a journal |
 | Backup | `backup-verify <manifest>` | Every source and copy, in full | `out/backup-verified-<n>.csv` |
@@ -84,10 +96,10 @@ for that long ends the run with exit 5.
 |---|---|
 | 0 | Done (or nothing to do) |
 | 2 | Configuration, list, journal or approval refused; nothing was changed |
-| 3 | Lightroom is running, or a lock file lies beside a catalog that is read |
-| 4 | Evidence is stale or incomplete: the message says what to run again (`catalogs`, `rejects`, `copies`) |
+| 3 | Lightroom is running, the list of processes cannot be read, or a lock file lies beside a catalog that is read |
+| 4 | Evidence is stale or incomplete: the message says what to run again (`catalogs`, `inventory`, `rejects`, `copies`) |
 | 5 | A drive stalled; the journal says where the run stopped |
-| 6 | Finished, but at least one row was held or refused (each named with its reason), or a file-system error stopped an `--apply` |
+| 6 | Finished, but at least one row was held or refused (each named with its reason), or a file-system or work database error stopped a command (the message names the file when the system reports one) |
 
 ## The process, end to end
 
@@ -96,15 +108,19 @@ duration depends on the drives (their type, their connection, one archive drive 
 again; see [Limits](#limits) for one example.
 
 1. **Report.** `catalogs`, `inventory`, `hash`, `report`. Read `out/summary.md` first: it opens with what could and
-   could not be read. Nothing outside the tool folder is changed by this phase.
+   could not be read. Nothing outside the tool folder is changed by this phase. `hash`, `verify` and the report's
+   verdicts skip file rows from partial scans.
 2. **Backup.** `backup-plan`, then read each manifest and approve it by reading it: `backup-run` refuses a manifest
    that breaks its rules but takes no SHA-256 of it. `backup-run <manifest>` as a dry run, then with `--apply`;
-   then `backup-verify <manifest>`. A rerun copies only what is missing.
+   then `backup-verify <manifest>`. A rerun copies only what is missing. Planning needs at least one complete
+   library scan and walks `photo_root` directly. `backup-plan` refuses if any archive drive is missing.
+   `backup-run` refuses if its manifest's drive is missing.
 3. **Cull.** In Lightroom, flag the photos you want gone as rejected, in the live catalog or in any shoot catalog.
    Then close Lightroom. Do not use "Delete Rejected Photos" and do not move or rename files yourself.
 4. **Reject check.** `catalogs`, then `rejects`. Read `out/rejects-summary.md`: the count per verdict, what each
    catalog rejected, and, as its last line, the SHA-256 of `out/reject-removal-list.csv`. `out/rejects.csv` gives
-   every reject with its verdict and the evidence (`how_decided`).
+   every reject with its verdict and the evidence (`how_decided`). `rejects` selects rejects from the catalogs
+   and uses hashes only from complete library scans when looking for twins.
 5. **Pilot.** Pick a few rows (one with a sidecar, one with a twin if any). `stage <list> --approved-sha256 <hex>
    --only <source> ...` as a dry run, then with `--apply`. Open Lightroom: those photos show as missing. Close it,
    `undo <batch> --apply`, and check that nothing else changed. Opening Lightroom changes the catalogs, so run
@@ -179,6 +195,9 @@ the full text.
   Open each in Lightroom and quit; the lock goes away. The tool never removes a lock. A catalog that cannot be
   opened can be added to `excluded_catalogs`, after checking that it records nothing you care about. Opening
   catalogs changes them, so run `catalogs` and `rejects` again afterwards.
+- **A catalog that cannot be read**: `catalogs` prints `unreadable: <catalog>: <reason>` for each one it could not
+  read in that run; the reason is also in the Coverage section of `out/summary.md` and in `out/01_catalogs.csv`. It
+  limits coverage until it can be read or you add it to `excluded_catalogs`.
 - **Exit 4 from `purge` right after you removed the staged photos in Lightroom**: expected. Run `catalogs` (not
   `rejects`), then `purge` again.
 - **Exit 4, "run catalogs again"**: a catalog changed since its snapshot (you opened Lightroom). Run `catalogs`,
@@ -198,6 +217,12 @@ the full text.
 - **Sync clients.** A file moved out of a synced folder is deleted from the cloud copy when the sync client next
   runs. Keep it off from `stage` until `purge` has finished, and decide before you turn it back
   on.
+- **A sidecar whose name holds `;`** keeps its photo from leaving through a removal list: the list joins sidecars
+  with `;`, so the row is held.
+- **A read-only photo** stops `purge` with exit 6 after its sidecars are deleted (their archive copies were checked
+  just before). Clear the read-only flag, run `purge` as a dry run again and approve the new SHA-256: the old one is
+  refused (exit 2) because the sidecars are gone. A read-only sidecar stops `purge` at that sidecar, as sidecars go
+  first.
 - **Time of check.** A change made in the moment between the last check and a rename or a delete is not seen.
 - **Windows only.** See [Requirements](#requirements).
 - **Lightroom's catalog format is private.** A future version could change the tables the tool reads. What the

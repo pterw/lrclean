@@ -65,6 +65,8 @@ class ReportTest(unittest.TestCase):
             self.assertTrue(handle.read().startswith(b"\xef\xbb\xbf"))
         self.assertEqual(read_csv(os.path.join(self.out, "08_missing.csv"))[1][0], "D:/lib/Zoë/IMG_0001.ARW")
         self.assertNotIn("\r", self.summary())
+        header = read_csv(os.path.join(self.out, "01_catalogs.csv"))[0]
+        self.assertEqual(header[header.index("status") + 1], "reason")
 
     def test_every_section_ends_with_how_decided(self):
         for section in report.SECTIONS.values():
@@ -128,6 +130,15 @@ class ReportTest(unittest.TestCase):
                        "\n- catalogs scan 1 of D:/cats: complete, finished 2026-02-03T01:00:00Z\n",
                        "\n- files scan 2 of E:/part-root: partial, finished 2026-02-03T02:00:00Z\n"):
             self.assertIn(needle, text)
+
+    def test_a_catalog_reason_ends_its_summary_line_and_a_catalog_without_one_has_none(self):
+        coverage = {**COVERAGE, "catalogs": [
+            {"catalog": "cat-a.lrcat", "status": "unreadable", "reason": "why-a", "limits_coverage": True},
+            {"catalog": "cat-b.lrcat", "status": "ok", "reason": "", "limits_coverage": False}]}
+        report.write_report(self.out, empty_sections(), coverage, LIMITS)
+        lines = self.summary().splitlines()
+        self.assertIn("- cat-a.lrcat: unreadable (limits coverage): why-a", lines)
+        self.assertIn("- cat-b.lrcat: ok", lines)
 
     def test_generated_time_is_read_back_from_a_written_summary(self):
         self.write(empty_sections())

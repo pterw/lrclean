@@ -34,6 +34,10 @@ the tests catch each one; CI does not run it.
   how it was decided. What to cull is your decision, never the tool's.
 - **Tests run on synthetic trees only.** Build each tree in a temporary directory, with the helpers in
   `tests/synth.py` and `tests/mover_world.py` and plainly synthetic names such as `shoot-a` and `IMG_0001.ARW`.
+- **The design's numbered rules are the contract.** A behaviour that a rule of
+  `docs/process/specs/2026-11-11-lr-cleanup-design.md` or a limit in `docs/guide.md` states is intended, even when
+  it looks like a defect: check them before reporting one. A change to such a behaviour changes the rule, the code
+  and the tests together.
 
 ## Conventions
 

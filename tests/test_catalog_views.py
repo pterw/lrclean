@@ -71,7 +71,7 @@ class Base(unittest.TestCase):
 class InventoryTest(Base):
     def test_every_catalog_is_a_row_with_stored_values_and_owner_exclusion(self):
         a = self.catalog("C:/c/a.lrcat", role="main", wal_bytes=7, has_lock=1)
-        self.catalog("C:/c/b.lrcat", status="unreadable", db_version=None)
+        self.catalog("C:/c/b.lrcat", status="unreadable", db_version=None, reason="why-b")
         self.record(a, f"{LIB}/x.mp4")
         self.record(a, f"{LIB}/y.ARW")
         rows = cv.catalog_inventory_rows(self.conn, excluded_catalogs=["C:\\C\\B.lrcat"])
@@ -82,6 +82,7 @@ class InventoryTest(Base):
         self.assertEqual((second["status"], second["records"], second["excluded_by_owner"]),
                          ("unreadable", 0, "yes"))
         self.assertTrue(first["how_decided"])
+        self.assertEqual((first["reason"], second["reason"]), ("", "why-b"))  # a row stored before the column: ""
 
 
 class DateMatchesTest(unittest.TestCase):

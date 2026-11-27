@@ -61,10 +61,20 @@ before the backup phase):
   "live_catalog": "C:\\Photos\\Main\\Main.lrcat",
   "old_states": [],
   "excluded_catalogs": [],
-  "exclude": [],
+  "exclude": ["C:\\System Volume Information"],
   "group_depth": 1
 }
 ```
+
+A whole system drive has folders that a user without administrator rights cannot list. When `inventory` cannot
+read a path, it names the path and marks the root's scan partial. Add the unreadable subfolder (for a file, the
+folder that holds it) to `exclude` in `work/config.json`, then run `inventory` again. Excluding a root does not
+help: move a file lying directly in a root into a subfolder and exclude that folder, make an unlistable root
+readable, or remove that root from the configuration.
+
+`hash`, `verify` and the report's verdicts skip file rows from partial scans. `backup-plan` needs at least one
+complete library scan and walks `photo_root` directly. `rejects` selects rejects from the catalogs and uses hashes
+only from complete library scans when looking for twins.
 
 `--base` defaults to the current folder, so run from the tool folder or put `--base <tool folder>` before the
 command: `lrclean --base <tool folder> report`. Close Lightroom, then run the read-only report. It writes only inside
@@ -87,6 +97,7 @@ Each is its own phase; the step-by-step is in [the guide](docs/guide.md#the-proc
 
 1. **Report.** Reads every catalog it can find (from copies), walks the photo drive, hashes files and reports what each file is.
 2. **Backup.** Copies every photo and video folder to two archive drives from a list you approve, and verifies every copy.
+   `backup-plan` refuses if any archive drive is missing. `backup-run` refuses if its manifest's drive is missing.
 3. **Reject check.** After you cull in Lightroom, decides which rejects can safely leave and writes a removal list.
 4. **Unrecorded copies.** Lists byte-identical copies that no catalog records: a second removal list, in the same format.
 5. **Offload.** `stage` (a reversible move into a staging folder, with `undo`), then `purge` (a permanent delete, after everything is checked again).

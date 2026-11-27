@@ -51,6 +51,7 @@ def catalog_inventory_rows(conn, *, excluded_catalogs: list[str]) -> list[dict]:
         "catalog": c["source_path"],
         "role": _text(c["role"]),
         "status": _text(c["status"]),
+        "reason": _text(c["reason"]),
         "db_version": _text(c["db_version"]),
         "records": counts.get(c["id"], 0),
         "wal_bytes": c["wal_bytes"] or 0,
