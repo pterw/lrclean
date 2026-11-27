@@ -431,19 +431,26 @@ class PartialRootTests(CliCase):
         return self.unlistable(os.path.join(self.lib, "shoot-a"))
 
     def test_inventory_names_the_partial_root_and_folder_and_backup_plan_names_the_cause(self):
-        self.write_config({**self.config, "archive_roots": [os.path.join(self.top, "arch1")]})
         self.assertEqual(self.run_cli("catalogs")[0], 0)
-        self.assertEqual(self.run_cli("inventory", scandir=self.unlistable_shoot_a()), (0, ""))
-        lines = self.stdout.splitlines()
-        self.assertEqual(lines[0], "files scans stored: 2")
-        self.assertEqual(lines[1], f"partial root {self.lib}: could not read {os.path.join(self.lib, 'shoot-a')}")
-        self.assertIn("exclude", lines[2])
-        self.assertEqual(len(lines), 3)  # the complete backup root is not named
-        code, err = self.run_cli("backup-plan", volume_of=lambda p: p)
-        self.assertEqual(code, 4)
-        self.assertIn(self.lib, err)
-        self.assertIn("exclude", err)
-        self.assertNotIn("run inventory first", err)
+        for folder, excluded, advice in (
+            (os.path.join(self.lib, "shoot-a"), [], "to exclude in work/config.json"),
+            (self.lib, [self.lib], "For a root you cannot list or a file directly in a root, "
+             "make it readable or remove the root from the config"),
+        ):
+            with self.subTest(folder=os.path.basename(folder)):
+                self.write_config({**self.config, "archive_roots": [os.path.join(self.top, "arch1")],
+                                   "exclude": excluded})
+                self.assertEqual(self.run_cli("inventory", scandir=self.unlistable(folder)), (0, ""))
+                lines = self.stdout.splitlines()
+                self.assertEqual(lines[0], "files scans stored: 2")
+                self.assertEqual(lines[1], f"partial root {self.lib}: could not read {folder}")
+                self.assertIn(advice, lines[2])
+                self.assertEqual(len(lines), 3)  # the complete backup root is not named
+                code, err = self.run_cli("backup-plan", volume_of=lambda p: p)
+                self.assertEqual(code, 4)
+                self.assertIn(self.lib, err)
+                self.assertIn(advice, err)
+                self.assertNotIn("run inventory first", err)
 
     def test_every_partial_root_of_the_run_gets_its_own_line(self):
         self.assertEqual(self.run_cli("catalogs")[0], 0)
@@ -475,7 +482,7 @@ class PartialRootTests(CliCase):
                 self.assertEqual(lines[0], "files scans stored: 2")
                 if partial:
                     self.assertEqual(lines[1], f"partial root {self.lib}: could not read {unreadable}")
-                    self.assertIn("for a file the folder that holds it", lines[2])
+                    self.assertIn("the folder that holds it", lines[2])
                 self.assertEqual(len(lines), 3 if partial else 1)  # a clean inventory has no advice line
 
     def test_verify_of_a_folder_under_a_partial_root_names_the_root_and_says_to_exclude(self):
@@ -513,24 +520,28 @@ class PartialRootTests(CliCase):
         self.assertEqual(self.rows("SELECT status FROM scan WHERE kind = 'files' AND root = "
                                    f"'{self.backup}'"), [("not_connected",)])
 
-    def test_a_file_directly_in_a_library_root_is_not_cured_by_excluding_the_root_and_the_advice_says_so(self):
-        stray = os.path.join(self.lib, "IMG_0003.ARW")
-        synth.make_tree(self.lib, {"IMG_0003.ARW": b"c" * 100})
+    def test_a_file_directly_in_a_root_is_not_cured_by_excluding_the_root_and_the_advice_says_so(self):
         real = os.stat
-
-        def stat(path, *args, **kwargs):
-            if str(path).endswith("IMG_0003.ARW"):
-                raise PermissionError(path)
-            return real(path, *args, **kwargs)
-
         self.assertEqual(self.run_cli("catalogs")[0], 0)
-        self.write_config({**self.config, "exclude": [self.lib]})
-        with mock.patch.object(os, "stat", stat):
-            self.assertEqual(self.run_cli("inventory"), (0, ""))
-        lines = self.stdout.splitlines()
-        self.assertEqual(lines[1], f"partial root {self.lib}: could not read {stray}")  # excluding the root cures nothing
-        self.assertIn("a file directly in a library root cannot be excluded: make it readable or move it into a "
-                      "folder", lines[2])
+        for root in (self.lib, self.backup):
+            with self.subTest(root=os.path.basename(root)):
+                stray = os.path.join(root, "IMG_0003.ARW")
+                synth.make_tree(root, {"IMG_0003.ARW": b"c" * 100})
+
+                def stat(path, *args, **kwargs):
+                    if str(path).endswith(stray):
+                        raise PermissionError(path)
+                    return real(path, *args, **kwargs)
+
+                self.write_config({**self.config, "exclude": [root]})
+                with mock.patch.object(os, "stat", stat):
+                    self.assertEqual(self.run_cli("inventory"), (0, ""))
+                lines = self.stdout.splitlines()
+                self.assertEqual(lines[1], f"partial root {root}: could not read {stray}")
+                self.assertIn("a file directly in a root, make it readable or remove the root from the config",
+                              lines[2])
+                self.assertIn("move the file to a subfolder and exclude that folder", lines[2])
+                self.assertEqual(len(lines), 3)
 
     def test_backup_plan_for_a_root_with_no_files_scan_still_says_run_inventory_first(self):
         self.write_config({**self.config, "archive_roots": [os.path.join(self.top, "arch1")]})

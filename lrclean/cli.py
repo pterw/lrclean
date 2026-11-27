@@ -201,9 +201,10 @@ def _inventory(run: _Run) -> int:
     return OK
 
 
-_EXCLUDE_ADVICE = ("add each folder named, and for a file the folder that holds it, to exclude in "
-                   "work/config.json and run inventory again; a file directly in a library root cannot be "
-                   "excluded: make it readable or move it into a folder")
+_EXCLUDE_ADVICE = ("Add an unreadable subfolder (for a file in a subfolder, the folder that holds it) "
+                   "to exclude in work/config.json. For a root you cannot list or a file directly in a root, "
+                   "make it readable or remove the root from the config. You can also move the file to a "
+                   "subfolder and exclude that folder. Run inventory again.")
 
 
 def _partial_lines(run: _Run, roots: list[str]) -> list[str]:

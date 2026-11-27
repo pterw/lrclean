@@ -38,7 +38,7 @@ scanned, staged from or backed up. Make it outside the photo folders.
 
 | Key | Meaning |
 |---|---|
-| `library_roots` | Folders on the system drive to inventory (the whole drive is fine; add `C:\System Volume Information` and any folder `inventory` names as unreadable, or the folder that holds a file it names, to `exclude`) |
+| `library_roots` | Folders on the system drive to inventory (the whole drive is fine). See `exclude` for unreadable paths. |
 | `photo_root` | The folder you treat as the photo library; only files under it are backed up or offloaded |
 | `catalog_roots` | Folders searched for `.lrcat` files (every connected drive is fine) |
 | `backup_roots` | Folders on external drives that may already hold copies (read for the report) |
@@ -46,7 +46,7 @@ scanned, staged from or backed up. Make it outside the photo folders.
 | `live_catalog` | The path of your main catalog |
 | `old_states` | Older states or backup copies of the live catalog: they neither reject nor keep, but their develop work and picks still keep a photo |
 | `excluded_catalogs` | Catalogs whose records protect nothing (unreadable ones, or ones you judge irrelevant). `catalogs` still copies and reads them; only the verdicts ignore them. |
-| `exclude` | Folders never walked. A folder you cannot list, or a file you cannot read, makes its whole root `partial` and every later step ignores that root: `inventory` names it, and you add the folder (for a file, the folder that holds it) here and run `inventory` again. A file directly in a library root cannot be excluded: make it readable or move it into a folder. |
+| `exclude` | Unreadable paths make a root's scan `partial` and limit coverage. Add an unreadable subfolder (for a file in a subfolder, the folder that holds it) to `exclude`. For a root you cannot list or a file directly in a root, make it readable or remove the root from the config. You can also move the file to a subfolder and exclude that folder. Run `inventory` again. |
 | `group_depth` | How many folder levels under `photo_root` make one group (a year folder) in the report |
 
 A catalog's role is always given here, never guessed from its name or folder.
