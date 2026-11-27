@@ -55,6 +55,13 @@ The first nine keys (all but `archive_roots`) are required by every command. `ar
 `backup-plan`, `backup-run`, `backup-verify`, `rejects`, `copies`, `stage` and `purge`; add it before `backup-plan`.
 The report (`catalogs`, `inventory`, `hash`, `report`) runs without it.
 
+Every command refuses a configuration it would read wrongly, with exit 2 and the key named, before it reads or writes
+anything: a path that is not absolute, that holds a `.` or `..` segment, or that holds a control character (in JSON,
+`"C:\temp"` is a tab: write each backslash twice or use forward slashes); two entries of `library_roots`, of
+`backup_roots` or of `catalog_roots` that are the same folder or where one holds the other; a library root and a
+backup root that overlap; a `photo_root` inside the tool folder. A catalog root inside a library root (the whole-drive
+layout), forward slashes, a trailing separator and another letter case are fine.
+
 The tool folder must be on the same drive as the files `stage` moves: a file on another drive is held
 `other_volume` and stays where it is.
 
