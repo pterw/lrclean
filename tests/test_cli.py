@@ -371,16 +371,19 @@ class MixedInventoryTests(CliCase):
 
 
 class PartialRootTests(CliCase):
-    def unlistable_shoot_a(self):
+    def unlistable(self, *folders):
         real = os.scandir
-        bad = os.path.normcase(os.path.join(self.lib, "shoot-a"))
+        bad = {os.path.normcase(folder) for folder in folders}
 
         def scandir(path):
-            if os.path.normcase(os.path.abspath(path)) == bad:
+            if os.path.normcase(os.path.abspath(path)) in bad:
                 raise PermissionError(path)
             return real(path)
 
         return scandir
+
+    def unlistable_shoot_a(self):
+        return self.unlistable(os.path.join(self.lib, "shoot-a"))
 
     def test_inventory_names_the_partial_root_and_folder_and_backup_plan_names_the_cause(self):
         self.write_config({**self.config, "archive_roots": [os.path.join(self.top, "arch1")]})
@@ -394,6 +397,48 @@ class PartialRootTests(CliCase):
         code, err = self.run_cli("backup-plan", volume_of=lambda p: p)
         self.assertEqual(code, 4)
         self.assertIn(self.lib, err)
+        self.assertIn("exclude", err)
+        self.assertNotIn("run inventory first", err)
+
+    def test_every_partial_root_of_the_run_gets_its_own_line(self):
+        self.assertEqual(self.run_cli("catalogs")[0], 0)
+        lib_shoot, backup_x = os.path.join(self.lib, "shoot-a"), os.path.join(self.backup, "x")
+        self.assertNotEqual(self.lib, self.backup)
+        self.assertEqual(self.run_cli("inventory", scandir=self.unlistable(lib_shoot, backup_x)), (0, ""))
+        lines = self.stdout.splitlines()
+        self.assertEqual(lines[1:3], [f"partial root {self.lib}: could not read {lib_shoot}",
+                                      f"partial root {self.backup}: could not read {backup_x}"])
+        self.assertEqual(len(lines), 4)  # the count, the two roots, the advice once
+
+    def test_a_file_that_cannot_be_read_is_cured_by_excluding_its_folder_not_the_file(self):
+        folder = os.path.join(self.lib, "shoot-a")
+        unreadable = os.path.join(folder, "IMG_0002.ARW")
+        real = os.stat
+
+        def stat(path, *args, **kwargs):
+            if str(path).endswith("IMG_0002.ARW"):
+                raise PermissionError(path)
+            return real(path, *args, **kwargs)
+
+        self.assertEqual(self.run_cli("catalogs")[0], 0)
+        for excluded, partial in (([], True), ([unreadable], True), ([folder], False)):
+            with self.subTest(exclude=excluded):
+                self.write_config({**self.config, "exclude": excluded})
+                with mock.patch.object(os, "stat", stat):
+                    self.assertEqual(self.run_cli("inventory"), (0, ""))
+                lines = self.stdout.splitlines()
+                self.assertEqual(lines[0], "files scans stored: 2")
+                if partial:
+                    self.assertEqual(lines[1], f"partial root {self.lib}: could not read {unreadable}")
+                    self.assertIn("for a file the folder that holds it", lines[2])
+                self.assertEqual(len(lines), 3 if partial else 1)  # a clean inventory has no advice line
+
+    def test_verify_of_a_folder_under_a_partial_root_names_the_root_and_says_to_exclude(self):
+        self.assertEqual(self.run_cli("catalogs")[0], 0)
+        self.assertEqual(self.run_cli("inventory", scandir=self.unlistable_shoot_a())[0], 0)
+        code, err = self.run_cli("verify", os.path.join(self.lib, "shoot-a"))
+        self.assertEqual(code, 4)
+        self.assertIn(f"partial root {self.lib}", err)
         self.assertIn("exclude", err)
         self.assertNotIn("run inventory first", err)
 
@@ -431,6 +476,18 @@ class VerifyFolderTests(CliCase):
         self.assertEqual(code, 4)
         self.assertIn("run inventory first", err)
         self.assertIn(os.path.join(self.lib, "no-such-folder"), err)
+
+    def test_a_folder_that_holds_no_raw_file_exits_four(self):
+        synth.make_tree(self.lib, {"jpg-only/IMG_0005.JPG": b"j", "xmp-only/IMG_0006.xmp": b"x"})
+        for step in ("catalogs", "inventory", "hash"):
+            self.assertEqual(self.run_cli(step)[0], 0)
+        self.assertEqual(self.run_cli("verify", os.path.join(self.lib, "shoot-a"))[0], 0)  # the control
+        self.assertFalse(os.path.exists(os.path.join(self.lib, "shoot")))
+        for name in ("shoot", "jpg-only", "xmp-only"):  # a name that only starts like shoot-a, a JPG, a sidecar
+            with self.subTest(folder=name):
+                code, err = self.run_cli("verify", os.path.join(self.lib, name))
+                self.assertEqual(code, 4)
+                self.assertIn(os.path.join(self.lib, name), err)
 
 
 class WiringTests(CliCase):
@@ -2643,12 +2700,14 @@ class ExitCodeTests(RejectsCase):
             source, os.path.join(gone, "shoot-a", "IMG_0001.ARW"), 100, os.stat(source).st_mtime_ns, "copy", "")])
         cases = (
             ("backup-plan on a missing drive", ("backup-plan",), 2, gone, {"archive_roots": [gone]}, None, {}),
+            ("backup-plan, only the second root on a missing drive", ("backup-plan",), 2, gone,
+             {"archive_roots": [self.arch[0], gone]}, None, {}),
             ("backup-run on a missing drive", ("backup-run", stranded), 2, gone,
              {"archive_roots": [gone]}, None, {}),
             ("backup-run --apply on a missing drive", ("backup-run", stranded, "--apply"), 2, gone,
              {"archive_roots": [gone]}, None, {}),
             ("backup-run --apply, journal folder is a file", ("backup-run", manifest, "--apply"), 6,
-             "journal", {},("work/journal", False), {}),
+             "journal", {}, ("work/journal", False), {}),
             ("backup-verify, list is a folder", ("backup-verify", manifest), 6,
              "backup-verified-1.csv", {}, ("out/backup-verified-1.csv", True), {}),
             ("rejects, output is a folder", ("rejects",), 6, "rejects.csv.tmp", {},
@@ -2663,7 +2722,7 @@ class ExitCodeTests(RejectsCase):
                 self.write_config({**self.config, **config})
                 self.steps()
                 self.assertEqual(self.run_cli("inventory")[0], 0)
-                undo =self.occupy(*occupied) if occupied else lambda: None
+                undo = self.occupy(*occupied) if occupied else lambda: None
                 before = self.listings()
                 injected = {"volume_of": lambda p: self.volumes.get(p, "z:")}
                 error = extra.get("error")

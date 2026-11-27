@@ -196,20 +196,26 @@ def _inventory(run: _Run) -> int:
     except ValueError as exc:
         raise ConfigError("library_roots, backup_roots", str(exc)) from exc
     print(f"files scans stored: {len(ids)}")
-    _name_partial_roots(run, ids)
+    partial = _partial_lines(run, _scan_roots(run))
+    if partial:
+        print("\n".join([*partial, _EXCLUDE_ADVICE]))
     return OK
 
 
-def _name_partial_roots(run: _Run, ids: list[int]) -> None:
-    """Say which roots of this run are partial and which folders they could not read."""
-    partial = [s for s in classify.root_states(run.conn, _scan_roots(run))
-               if s.status == "partial" and s.scan_id in ids]
-    for state in partial:
-        rows = run.conn.execute('SELECT path_orig FROM "file" WHERE scan_id = ? AND ext = ? ORDER BY id',
-                                (state.scan_id, inventory.UNREADABLE))
-        print(f"partial root {state.root}: could not read " + "; ".join(r["path_orig"] for r in rows))
-    if partial:
-        print("add those folders to exclude in work/config.json and run inventory again")
+_EXCLUDE_ADVICE = ("add each folder named, and for a file the folder that holds it, to exclude in "
+                   "work/config.json and run inventory again")
+
+
+def _partial_lines(run: _Run, roots: list[str]) -> list[str]:
+    """One line per partial root among `roots`: the root and the folders or files it could not read."""
+    lines = []
+    for state in classify.root_states(run.conn, roots):
+        if state.status == "partial":
+            rows = run.conn.execute('SELECT path_orig FROM "file" WHERE scan_id = ? AND ext = ? ORDER BY id',
+                                    (state.scan_id, inventory.UNREADABLE))
+            lines.append(f"partial root {state.root}: could not read " + "; ".join(r["path_orig"] for r in rows))
+    return lines
+    return partial
 
 
 def _hash(run: _Run) -> int:
@@ -224,13 +230,16 @@ def _hash(run: _Run) -> int:
 def _verify(run: _Run) -> int:
     _library_scan_ids(run.conn, run.cfg["library_roots"])
     folder = os.path.abspath(run.args.folder)
-    prefix = paths.norm(folder).rstrip("/") + "/"
-    if not any(r["ext"] in paths.RAW_EXTS and r["path_norm"].startswith(prefix)
-               for r in classify.inventoried_files(run.conn, run.cfg["library_roots"], photos_only=True)):
-        raise StepMissing(f"run inventory first: no raw file under {folder} is in the latest files scans")
-    counts = backups.verify(
-        run.conn, folder, library_roots=run.cfg["library_roots"],
-        backup_roots=run.cfg["backup_roots"], stat=run.stat, now=run.now)
+    try:
+        counts = backups.verify(
+            run.conn, folder, library_roots=run.cfg["library_roots"],
+            backup_roots=run.cfg["backup_roots"], stat=run.stat, now=run.now)
+    except backups.NoRawUnder as exc:
+        holders = [root for root in run.cfg["library_roots"] if backup_plan.is_inside(folder, root)]
+        partial = _partial_lines(run, holders)
+        if partial:  # running inventory again cannot cure this: the root has to be made readable
+            raise StepMissing("\n".join([*partial, _EXCLUDE_ADVICE])) from exc
+        raise StepMissing(f"run inventory first: no raw file under {folder} is in the latest files scans") from exc
     print(", ".join(f"{name}={n}" for name, n in counts.items()))
     return OK
 
@@ -268,10 +277,9 @@ def _backup_plan(run: _Run) -> int:
     except backup_plan.ManifestError as exc:
         states = classify.root_states(run.conn, run.cfg["library_roots"])
         partial = [s.root for s in states if s.status == "partial"]
-        if partial and not any(s.status == "complete" for s in states):
+        if partial:  # the only ManifestError of plan_manifests is "no library root has a complete files scan"
             raise StepMissing(f"no library root has a complete files scan: the latest scan of {', '.join(partial)} "
-                              "is partial; add the folders inventory listed to exclude in work/config.json "
-                              "and run inventory again") from exc
+                              f"is partial; {_EXCLUDE_ADVICE}") from exc
         raise StepMissing(f"run inventory first: {exc}") from exc
     written = backup_plan.write_plan(os.path.join(run.base, "out"), plan)
     for root, path in zip(plan.roots, written):
@@ -916,7 +924,7 @@ def main(argv: list[str] | None = None, *, processes=catalogs.running_processes,
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     args = _parser().parse_args(argv)
-    base =os.path.abspath(args.base)
+    base = os.path.abspath(args.base)
     try:
         cfg = load_config(os.path.join(base, "work", "config.json"))
     except ConfigError as exc:

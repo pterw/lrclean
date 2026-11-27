@@ -8,6 +8,7 @@ import unittest
 from test_cli import CliCase
 
 PATH_NAME = "shoot-ţ"  # a letter that cp1252 cannot encode
+SURROGATE_NAME = "shoot-\udc80"  # legal on NTFS, and not text at all: UTF-8 cannot encode it
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -38,10 +39,16 @@ class OutputEncodingTests(CliCase):
         self.assertIn(os.path.join(self.base, "out"), out)
 
     def test_a_path_outside_the_code_page_is_printed_to_stderr(self):
-        missing = os.path.join(self.top, PATH_NAME, "manifest.csv")
-        code, _, err = self.lrclean("backup-run", missing)
-        self.assertEqual(code, 2)
-        self.assertIn(missing, err)
+        # The tool's own folder cannot hold the surrogate name (SQLite refuses it), so it sits in a path argument
+        for name, printed in ((PATH_NAME, PATH_NAME), (SURROGATE_NAME, "shoot-\\udc80")):
+            with self.subTest(name=name):
+                with self.assertRaises(UnicodeEncodeError):
+                    name.encode("cp1252")
+                self.assertEqual(printed == name, name == PATH_NAME)  # the escape is not the name itself
+                missing = os.path.join(self.top, name, "manifest.csv")
+                code, _, err = self.lrclean("backup-run", missing)
+                self.assertEqual(code, 2)
+                self.assertIn(os.path.join(self.top, printed, "manifest.csv"), err)
 
 
 if __name__ == "__main__":

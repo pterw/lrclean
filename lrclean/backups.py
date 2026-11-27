@@ -18,6 +18,10 @@ SAMPLED_HOW = ("equal size and sample hash on a complete backup root; verified "
                "when both full hashes are valid and equal")
 
 
+class NoRawUnder(Exception):
+    """`verify` found no raw file under the folder in the latest files scans."""
+
+
 def _raws(conn, roots: list[str]) -> list:
     return [r for r in classify.inventoried_files(conn, roots, photos_only=True)
             if r["ext"] in paths.RAW_EXTS]
@@ -170,6 +174,8 @@ def verify(conn, folder: str, *, library_roots: list[str], backup_roots: list[st
 
     prefix = paths.norm(folder).rstrip("/") + "/"
     lib = [r for r in _raws(conn, library_roots) if r["path_norm"].startswith(prefix)]
+    if not lib:
+        raise NoRawUnder(folder)
     lib = [r for r in lib if full_hash(r)]
     root_of = _complete_roots(conn, backup_roots)
     back = _raws(conn, backup_roots)

@@ -38,7 +38,7 @@ scanned, staged from or backed up. Make it outside the photo folders.
 
 | Key | Meaning |
 |---|---|
-| `library_roots` | Folders on the system drive to inventory (the whole drive is fine; add `C:\System Volume Information` and any folder `inventory` names as unreadable to `exclude`) |
+| `library_roots` | Folders on the system drive to inventory (the whole drive is fine; add `C:\System Volume Information` and any folder `inventory` names as unreadable, or the folder that holds a file it names, to `exclude`) |
 | `photo_root` | The folder you treat as the photo library; only files under it are backed up or offloaded |
 | `catalog_roots` | Folders searched for `.lrcat` files (every connected drive is fine) |
 | `backup_roots` | Folders on external drives that may already hold copies (read for the report) |
@@ -46,7 +46,7 @@ scanned, staged from or backed up. Make it outside the photo folders.
 | `live_catalog` | The path of your main catalog |
 | `old_states` | Older states or backup copies of the live catalog: they neither reject nor keep, but their develop work and picks still keep a photo |
 | `excluded_catalogs` | Catalogs whose records protect nothing (unreadable ones, or ones you judge irrelevant). `catalogs` still copies and reads them; only the verdicts ignore them. |
-| `exclude` | Folders never walked. A folder you cannot list makes its whole root `partial` and every later step ignores that root: `inventory` names the folder, and you add it here and run `inventory` again. |
+| `exclude` | Folders never walked. A folder you cannot list, or a file you cannot read, makes its whole root `partial` and every later step ignores that root: `inventory` names it, and you add the folder (for a file, the folder that holds it) here and run `inventory` again. |
 | `group_depth` | How many folder levels under `photo_root` make one group (a year folder) in the report |
 
 A catalog's role is always given here, never guessed from its name or folder.
@@ -203,8 +203,10 @@ the full text.
   on.
 - **A sidecar whose name holds `;`** keeps its photo from leaving through a removal list: the list joins sidecars
   with `;`, so the row is held.
-- **A read-only file** stops `purge` with exit 6 after its sidecars are deleted (their archive copies were checked
-  just before). Clear the read-only flag and run `purge` again.
+- **A read-only photo** stops `purge` with exit 6 after its sidecars are deleted (their archive copies were checked
+  just before). Clear the read-only flag, run `purge` as a dry run again and approve the new SHA-256: the old one is
+  refused (exit 2) because the sidecars are gone. A read-only sidecar stops `purge` at that sidecar, as sidecars go
+  first.
 - **Time of check.** A change made in the moment between the last check and a rename or a delete is not seen.
 - **Windows only.** See [Requirements](#requirements).
 - **Lightroom's catalog format is private.** A future version could change the tables the tool reads. What the
