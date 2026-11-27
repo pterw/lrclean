@@ -173,7 +173,16 @@ def _catalogs(run: _Run) -> int:
         processes=run.processes, now=run.now)
     bad = sum(1 for c in _latest_catalogs(run.conn) if c["status"] in ("unreadable", "partial"))
     print(f"catalogs stored: {len(ids)} ({bad} unreadable or partial)")
+    _print_unreadable(run.conn, ids)
     return OK
+
+
+def _print_unreadable(conn, ids: list[int]) -> None:
+    """One line per catalog stored unreadable in this run (by row id): the catalog and why."""
+    sql = ('SELECT source_path, reason FROM "catalog" WHERE status = \'unreadable\' '
+           f'AND id IN ({",".join("?" * len(ids))}) ORDER BY id')
+    for row in conn.execute(sql, ids):
+        print(f"unreadable: {row['source_path']}: {row['reason']}")
 
 
 def _inventory(run: _Run) -> int:
@@ -386,7 +395,7 @@ def _coverage(run: _Run, stale: list[str], unseen: list[str]) -> tuple[dict, cla
         limits = counted and (cat["status"] in ("unreadable", "partial")
                               or cat["source_path"] in stale_set)
         cats.append({"catalog": cat["source_path"], "status": cat["status"],
-                     "limits_coverage": limits})
+                     "reason": cat["reason"] or "", "limits_coverage": limits})
     cov = classify.coverage(run.conn, catalog_roots=cfg["catalog_roots"],
                             excluded_catalogs=cfg["excluded_catalogs"], stale_catalogs=stale,
                             unseen_catalogs=unseen)

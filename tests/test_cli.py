@@ -559,6 +559,17 @@ class WiringTests(CliCase):
         self.assertEqual(self.run_cli("catalogs")[0], 0)
         self.assertIn("(1 unreadable or partial)", self.stdout)
 
+    def test_report_summary_holds_the_reason_a_catalog_was_unreadable(self):
+        bad = os.path.join(self.cats, "bad.lrcat")
+        synth.make_unreadable(bad)
+        for step in ("catalogs", "inventory", "hash"):
+            self.assertEqual(self.run_cli(step)[0], 0)
+        (reason,) = self.rows("SELECT reason FROM catalog WHERE status = 'unreadable'")[0]
+        self.assertTrue(reason)
+        self.assertEqual(self.run_cli("report"), (0, ""))
+        with open(os.path.join(self.out_dir(), "summary.md"), encoding="utf-8") as handle:
+            self.assertIn(f"unreadable (limits coverage): {reason}", handle.read())
+
     def test_stale_or_owner_excluded_catalog_blocks_safe_candidates(self):
         # a byte-identical unrecorded twin of the recorded IMG_0001.ARW
         with open(os.path.join(self.lib, "shoot-a", "IMG_0002.ARW"), "wb") as handle:

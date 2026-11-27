@@ -1,5 +1,7 @@
+import contextlib
 import csv
 import hashlib
+import io
 import os
 import sqlite3
 import shutil
@@ -10,7 +12,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import synth
-from lrclean import catalog_views, catalogs, paths, report, store
+from lrclean import catalog_views, catalogs, cli, paths, report, store
 
 NONE_RUNNING = lambda: []  # noqa: E731
 
@@ -455,7 +457,7 @@ class TestUnreadableReasons(Tmp):
 
     def test_every_path_to_unreadable_records_its_reason_in_the_row_the_csv_and_the_summary(self):
         conn = self.conn()
-        sources = {}
+        sources, stored = {}, {}
         for name in UNREADABLE_REASONS:
             source, extra = self.build(name)
             sources[name] = source
@@ -465,6 +467,7 @@ class TestUnreadableReasons(Tmp):
             else:
                 ids = self.scan(conn, [os.path.dirname(source)], **extra)
             self.assertEqual(len(ids), 1, name)
+            stored[name] = ids
         rows = {r["source_path"]: r for r in conn.execute("SELECT * FROM catalog")}
         cat_rows = {r["catalog"]: r for r in catalog_views.catalog_inventory_rows(conn, excluded_catalogs=[])}
         sections = {n: [] for n in report.SECTIONS}
@@ -490,6 +493,12 @@ class TestUnreadableReasons(Tmp):
                 self.assertEqual(csv_rows[source]["reason"], reason)
                 self.assertEqual(csv_rows[source]["status"], "unreadable")
                 self.assertIn(f"- {source}: unreadable (limits coverage): {reason}", summary)
+                # the `catalogs` output names this run's catalog and reason; the other cases' rows,
+                # stored unreadable by earlier runs, are not printed
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    cli._print_unreadable(conn, stored[name])
+                self.assertEqual(out.getvalue().splitlines(), [f"unreadable: {source}: {reason}"])
 
     def test_ok_empty_and_partial_rows_keep_an_empty_reason_in_the_csv(self):
         synth.make_catalog(self.path("r", "ok.lrcat"), [{"base": "IMG_5"}])
