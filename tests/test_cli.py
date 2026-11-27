@@ -77,6 +77,57 @@ class CliCase(unittest.TestCase):
 
 
 class ConfigTests(CliCase):
+    def files_under_top(self):
+        return sorted(os.path.join(d, name) for d, dirs, files in os.walk(self.top) for name in dirs + files)
+
+    def test_a_configuration_that_would_be_read_wrongly_is_refused_before_anything_is_written(self):
+        nested = os.path.join(self.lib, "shoot-a")
+        in_backup = os.path.join(self.backup, "x")
+        cases = {
+            "relative path": ("old_states", {"old_states": ["cats"]}),
+            "dot segment": ("library_roots", {"library_roots": [self.lib + "/shoot-a/.."]}),
+            "control character": ("exclude", {"exclude": ["C:\temp"]}),
+            "library child before parent": ("library_roots", {"library_roots": [nested, self.lib]}),
+            "library parent before child": ("library_roots", {"library_roots": [self.lib, nested]}),
+            "library duplicate": ("library_roots", {"library_roots": [self.lib, self.lib]}),
+            "backup nested": ("backup_roots", {"backup_roots": [self.backup, in_backup]}),
+            "catalog nested": ("catalog_roots", {"catalog_roots": [self.cats, os.path.join(self.cats, "a")]}),
+            "backup inside library": ("backup_roots", {"backup_roots": [nested]}),
+            "library inside backup": ("backup_roots", {"library_roots": [in_backup]}),
+            "photo root is the base": ("photo_root", {"photo_root": self.base}),
+            "photo root inside the base": ("photo_root",
+                                           {"photo_root": os.path.join(self.base, "stray")}),
+        }
+        os.makedirs(os.path.join(self.cats, "a"))
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.top)
+        self.assertTrue(os.path.isdir("cats"))  # the relative path exists, so only the check refuses it
+        self.assertIn("\t", "C:\temp")  # a tab, not a backslash and a t
+        for name, (key, change) in cases.items():
+            with self.subTest(name):
+                self.write_config({**self.config, **change})
+                before = self.files_under_top()
+                code, err = self.run_cli("catalogs")
+                self.assertEqual(code, 2)
+                self.assertIn(key, err)
+                self.assertEqual(self.files_under_top(), before)
+                self.assertFalse(os.path.exists(self.out_dir()))
+
+    def test_spellings_and_layouts_that_are_read_rightly_still_load(self):
+        inside_library = os.path.join(self.lib, "cats")
+        cases = {
+            "forward slashes": {"library_roots": [self.lib.replace("\\", "/")]},
+            "trailing separator": {"library_roots": [self.lib + os.sep]},
+            "other letter case": {"library_roots": [self.lib.upper()]},
+            "catalog root inside a library root": {"catalog_roots": [inside_library]},
+        }
+        self.assertNotEqual(self.lib.upper(), self.lib)
+        for name, change in cases.items():
+            with self.subTest(name):
+                self.write_config({**self.config, **change})
+                path = os.path.join(self.base, "work", "config.json")
+                self.assertEqual(cli.load_config(path)[next(iter(change))], next(iter(change.values())))
+
     def test_every_key_is_required_and_named(self):
         for key in KEYS:
             with self.subTest(key=key):
@@ -572,14 +623,8 @@ class WiringTests(CliCase):
         self.assertEqual(sorted(os.listdir(os.path.join(self.lib, "work"))), ["config.json"])
         self.assertFalse(os.path.exists(self.out_dir()))
         # the comparison is normalised: any spelling of the base is still the base
-        spellings = {
-            "trailing separator": self.lib + os.sep,
-            "dot-dot segment": os.path.join(self.lib, "..", "lib"),
-        }
-        try:
-            spellings["relative path"] = os.path.relpath(self.lib)
-        except ValueError:  # another drive than the current directory: no relative spelling
-            pass
+        # (a relative or dot-dot spelling is refused earlier, by the configuration refusals)
+        spellings = {"trailing separator": self.lib + os.sep}
         if os.name == "nt":
             spellings["other case"] = self.lib.upper()
             spellings["forward slashes"] = self.lib.replace("\\", "/")

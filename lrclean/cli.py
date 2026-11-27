@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import ntpath
 import os
 import sys
 import time
@@ -99,7 +100,44 @@ def load_config(path: str) -> dict:
             raise ConfigError(key, "missing or of the wrong type")
     if "archive_roots" in data and not _valid("archive_roots", data["archive_roots"]):
         raise ConfigError("archive_roots", "must be a list of strings")
+    for key in (*LIST_KEYS, "photo_root", "live_catalog"):
+        for item in _path_items(data.get(key)):
+            _check_spelling(key, item)
+    _check_overlaps(data)
     return data
+
+
+def _path_items(value) -> list[str]:
+    if isinstance(value, list):
+        return value
+    return [] if value is None else [value]
+
+
+def _check_spelling(key: str, item: str) -> None:
+    if any(ord(char) < 32 for char in item):
+        raise ConfigError(key, f"{item!r} holds a control character; write each backslash twice "
+                               "or use forward slashes")
+    if not ntpath.isabs(item):
+        raise ConfigError(key, f"{item!r} is not an absolute path")
+    if {".", ".."} & set(item.replace("\\", "/").split("/")):
+        raise ConfigError(key, f"{item!r} holds a '.' or '..' segment")
+
+
+def _overlap(first: str, second: str) -> bool:
+    return backup_plan.is_inside(first, second) or backup_plan.is_inside(second, first)
+
+
+def _check_overlaps(cfg: dict) -> None:
+    for key in ("library_roots", "backup_roots", "catalog_roots"):
+        roots = cfg[key]
+        for number, first in enumerate(roots):
+            if any(_overlap(first, second) for second in roots[number + 1:]):
+                raise ConfigError(key, f"{first!r} is the same folder as another entry or lies inside it "
+                                       "(or holds it)")
+    for library in cfg["library_roots"]:
+        if any(_overlap(library, backup) for backup in cfg["backup_roots"]):
+            raise ConfigError("backup_roots", f"a backup root and the library root {library!r} are the same "
+                                              "folder or one lies inside the other")
 
 
 def _exclude(run: _Run) -> list[str]:
@@ -877,6 +915,9 @@ def main(argv: list[str] | None = None, *, processes=catalogs.running_processes,
     for root in (*cfg["library_roots"], *cfg["backup_roots"], *cfg["catalog_roots"]):
         if paths.norm(os.path.abspath(root)) == paths.norm(base):  # a root's own entry is never pruned
             return _fail(CONFIG_ERROR, f"configuration error: the base folder is the root {root}")
+    if backup_plan.is_inside(cfg["photo_root"], base):
+        return _fail(CONFIG_ERROR, f"configuration error: photo_root: {cfg['photo_root']!r} is the tool "
+                                   "folder or lies inside it")
     conn = None if args.command in _NO_DATABASE else store.connect(
         os.path.join(base, "work", "lrclean.sqlite"))
     run = _Run(args, cfg, conn, base, processes, now, stat, attrs_of, exists, volume_of, free_bytes,
