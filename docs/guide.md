@@ -195,6 +195,9 @@ the full text.
   Open each in Lightroom and quit; the lock goes away. The tool never removes a lock. A catalog that cannot be
   opened can be added to `excluded_catalogs`, after checking that it records nothing you care about. Opening
   catalogs changes them, so run `catalogs` and `rejects` again afterwards.
+- **A catalog that cannot be read**: `catalogs` prints `unreadable: <catalog>: <reason>` for each one it could not
+  read in that run; the reason is also in the Coverage section of `out/summary.md` and in `out/01_catalogs.csv`. It
+  limits coverage until it can be read or you add it to `excluded_catalogs`.
 - **Exit 4 from `purge` right after you removed the staged photos in Lightroom**: expected. Run `catalogs` (not
   `rejects`), then `purge` again.
 - **Exit 4, "run catalogs again"**: a catalog changed since its snapshot (you opened Lightroom). Run `catalogs`,
