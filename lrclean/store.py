@@ -9,7 +9,7 @@ from lrclean import paths
 TABLES: dict[str, tuple[str, ...]] = {
     "scan": ("id", "root", "kind", "started", "finished", "status"),
     "catalog": ("id", "scan_id", "source_path", "snapshot_path", "role", "status",
-                "size", "mtime_ns", "db_version", "wal_bytes", "has_lock"),
+                "size", "mtime_ns", "db_version", "wal_bytes", "has_lock", "reason"),
     "record": ("catalog_id", "path_norm", "path_orig", "via", "ext",
                "capture_time", "is_sidecar"),
     "catalog_root": ("catalog_id", "path_norm", "path_orig", "via"),

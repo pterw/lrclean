@@ -36,6 +36,7 @@ class CatalogRead(NamedTuple):
     records: list[dict]
     roots: list[dict]
     images: list[dict]
+    reason: str = ""
 
 
 def running_processes() -> list[str]:
@@ -85,12 +86,14 @@ def snapshot_catalog(source: str, work_dir: str, processes=running_processes, st
     work = paths.norm(os.path.abspath(work_dir))
     home = paths.norm(os.path.abspath(os.path.dirname(source)))
     if work == home or work.startswith(home.rstrip("/") + "/"):
-        raise ValueError("work_dir is inside the catalog's folder")
+        raise ValueError("the work folder is inside the catalog's folder")
     for suffix in _SUFFIXES:
         try:
             attrs = getattr(stat(paths.fs_path(source + suffix)), "st_file_attributes", 0)
         except FileNotFoundError:
             continue
+        except OSError as exc:
+            raise ValueError(f"the attributes of {source + suffix} cannot be read: {exc}") from exc
         if paths.is_placeholder(attrs):
             raise ValueError(f"{source + suffix} is an online-only placeholder: refusing to copy it")
     name = os.path.basename(source)
@@ -291,8 +294,8 @@ def read_snapshot(snapshot_path: str, source_path: str) -> CatalogRead:
             return _read_open(con, source_dir)
         finally:
             con.close()
-    except sqlite3.Error:
-        return CatalogRead("unreadable", "", [], [], [])
+    except sqlite3.Error as exc:
+        return CatalogRead("unreadable", "", [], [], [], f"SQLite cannot read the copy of the catalog: {exc}")
 
 
 def role_of(source: str, live_catalog: str | None, old_states: list[str]) -> str:
@@ -306,21 +309,28 @@ def _store_catalog(conn, scan_id, source, role, processes, work_dir, stat=os.sta
     size = mtime_ns = 0
     snapshot = ""
     result = CatalogRead("unreadable", "", [], [], [])
+    reason = ""
     wal = paths.fs_path(source + "-wal")
     wal_bytes = os.path.getsize(wal) if os.path.exists(wal) else 0
     has_lock = int(os.path.exists(paths.fs_path(source + ".lock")))
     try:
         found = stat(paths.fs_path(source))
+    except OSError as exc:
+        reason = f"the attributes of {source} cannot be read: {exc}"
+    else:
         size, mtime_ns = found.st_size, found.st_mtime_ns
-        snapshot = snapshot_catalog(source, work_dir, processes, stat)
-        result = read_snapshot(snapshot, source)
-    except (OSError, ValueError):
-        pass
+        try:
+            snapshot = snapshot_catalog(source, work_dir, processes, stat)
+            result = read_snapshot(snapshot, source)
+        except ValueError as exc:
+            reason = str(exc)
+        except OSError as exc:
+            reason = f"copying the catalog failed: {exc}"
     catalog_id = store.insert_row(
         conn, "catalog", scan_id=scan_id, source_path=source, snapshot_path=snapshot,
         role=role, status=result.status, size=size, mtime_ns=mtime_ns,
         db_version=result.db_version,
-        wal_bytes=wal_bytes, has_lock=has_lock)
+        wal_bytes=wal_bytes, has_lock=has_lock, reason=reason or result.reason)
     for rec in result.records:
         store.insert_row(conn, "record", catalog_id=catalog_id, **rec)
     for root in result.roots:

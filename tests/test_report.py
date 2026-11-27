@@ -129,6 +129,15 @@ class ReportTest(unittest.TestCase):
                        "\n- files scan 2 of E:/part-root: partial, finished 2026-02-03T02:00:00Z\n"):
             self.assertIn(needle, text)
 
+    def test_a_catalog_reason_ends_its_summary_line_and_a_catalog_without_one_has_none(self):
+        coverage = {**COVERAGE, "catalogs": [
+            {"catalog": "cat-a.lrcat", "status": "unreadable", "reason": "why-a", "limits_coverage": True},
+            {"catalog": "cat-b.lrcat", "status": "ok", "reason": "", "limits_coverage": False}]}
+        report.write_report(self.out, empty_sections(), coverage, LIMITS)
+        lines = self.summary().splitlines()
+        self.assertIn("- cat-a.lrcat: unreadable (limits coverage): why-a", lines)
+        self.assertIn("- cat-b.lrcat: ok", lines)
+
     def test_generated_time_is_read_back_from_a_written_summary(self):
         self.write(empty_sections())
         path = os.path.join(self.out, "summary.md")

@@ -116,8 +116,17 @@ def link_refusal(base: str, is_link, listdir) -> Refusal | None:
     linked = next((folder for folder in (base, work, snapshots, os.path.join(work, "staging"),
                                          os.path.join(work, "journal"), os.path.join(base, "out"), *entries)
                    if is_link(folder)), "")
-    return Refusal(2, f"{linked} is a link (junction or symbolic link): the tool's folders must be real folders") \
-        if linked else None
+    if not linked:
+        return None
+    try:
+        where = f"points to {os.readlink(linked)}"
+    except (OSError, ValueError):
+        where = "points somewhere that cannot be read"
+    if linked in entries:
+        return Refusal(2, f"{linked}, a catalog's snapshot folder, is a link (junction or symbolic link) "
+                          f"that {where}: it must be a real folder, so remove the link")
+    return Refusal(2, f"{linked} is a link (junction or symbolic link) that {where}: "
+                      "the tool's folders must be real folders")
 
 
 def _summary_text(ctx, listing) -> str | None:

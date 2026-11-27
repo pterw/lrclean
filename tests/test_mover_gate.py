@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from lrclean import paths, store
 from lrclean.classify import Coverage
@@ -148,6 +149,48 @@ class LinkRefusalTest(unittest.TestCase):
                 refusal = link_refusal(base, lambda path, linked=folder: path == linked, listdir)
                 self.assertEqual(refusal.code, 2)
                 self.assertIn(folder, refusal.message)
+
+
+class LinkMessageTest(unittest.TestCase):
+    """Exit 2 names where a link points, and a catalog's snapshot folder gets its own sentence."""
+
+    def setUp(self):
+        self.base = os.path.join(os.path.abspath(os.sep), "tool")
+        self.snapshots = os.path.join(self.base, "work", "catalogs")
+        self.snapshot = os.path.join(self.snapshots, "shoot-a-x")
+
+    def refuse(self, linked, readlink):
+        with mock.patch("lrclean.mover_gate.os.readlink", readlink):
+            return link_refusal(self.base, lambda path: path == linked, lambda path: ["shoot-a-x"])
+
+    def test_rc103_a_link_names_where_it_points_for_a_tool_folder_and_a_snapshot_folder(self):
+        target = os.path.join(os.path.abspath(os.sep), "elsewhere", "shoot-b")
+        for linked in (os.path.join(self.base, "out"), self.snapshot):
+            with self.subTest(linked):
+                self.assertNotIn(target, linked)
+                refusal = self.refuse(linked, lambda path: target)
+                self.assertEqual(refusal.code, 2)
+                self.assertIn(linked, refusal.message)
+                self.assertIn(f"points to {target}", refusal.message)
+
+    def test_rc103_a_link_whose_target_cannot_be_read_gets_a_fallback_sentence_and_no_exception(self):
+        def unreadable(path):
+            raise OSError("not a link here")
+
+        for linked in (os.path.join(self.base, "out"), self.snapshot):
+            with self.subTest(linked):
+                refusal = self.refuse(linked, unreadable)
+                self.assertEqual(refusal.code, 2)
+                self.assertIn(linked, refusal.message)
+                self.assertIn("points somewhere that cannot be read", refusal.message)
+
+    def test_rc155_a_snapshot_folder_that_is_a_link_has_its_own_sentence(self):
+        tool = self.refuse(os.path.join(self.base, "work", "journal"), lambda path: "x").message
+        snapshot = self.refuse(self.snapshot, lambda path: "x").message
+        self.assertIn("a catalog's snapshot folder", snapshot)
+        self.assertNotIn("snapshot folder", tool)
+        self.assertIn("the tool's folders must be real folders", tool)
+        self.assertNotIn("the tool's folders must be real folders", snapshot)
 
 
 class WholeRunRefusalTest(unittest.TestCase):

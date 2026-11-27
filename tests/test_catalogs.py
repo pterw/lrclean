@@ -1,3 +1,4 @@
+import csv
 import hashlib
 import os
 import sqlite3
@@ -9,7 +10,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import synth
-from lrclean import catalogs, paths, store
+from lrclean import catalog_views, catalogs, paths, report, store
 
 NONE_RUNNING = lambda: []  # noqa: E731
 
@@ -377,6 +378,9 @@ class TestStatuses(Tmp):
         got = {os.path.basename(r["source_path"]): r["status"] for r in conn.execute("SELECT * FROM catalog")}
         self.assertEqual(got, {"ok.lrcat": "ok", "partial.lrcat": "partial",
                                "empty.lrcat": "empty", "bad.lrcat": "unreadable"})
+        reasons = {os.path.basename(r["source_path"]): r["reason"] for r in conn.execute("SELECT * FROM catalog")}
+        self.assertEqual({k: v == "" for k, v in reasons.items()},
+                         {"ok.lrcat": True, "partial.lrcat": True, "empty.lrcat": True, "bad.lrcat": False})
         stored = [r["path_orig"] for r in conn.execute(
             "SELECT path_orig FROM record JOIN catalog ON catalog.id = catalog_id "
             "WHERE source_path LIKE '%ok.lrcat' AND via = 'absolute'")]
@@ -404,6 +408,95 @@ class TestStatuses(Tmp):
         con.commit()
         con.close()
         self.assertEqual(self.read(source).status, "unreadable")
+
+
+UNREADABLE_REASONS = {  # case -> a phrase only that case's reason holds
+    "placeholder": "is an online-only placeholder",
+    "attributes": "attributes of",
+    "snapshot_link": "with links resolved",
+    "work_inside": "work folder is inside",
+    "copy_failed": "copying the catalog failed",
+    "sqlite": "SQLite cannot read",
+}
+
+
+class TestUnreadableReasons(Tmp):
+    def build(self, name):
+        """One catalog in its own tree; returns (source, extra arguments for the scan)."""
+        home = os.path.join(self.tmp, name, "shoot-a")
+        source = self.path(name, "shoot-a", "main.lrcat")
+        work = os.path.join(self.tmp, name, "work")
+        os.makedirs(work)
+        if name == "sqlite":
+            synth.make_unreadable(source)
+        else:
+            synth.make_catalog(source, [])
+        extra = {"work_dir": work}
+
+        def denied_stat(path):
+            if path.replace("\\", "/").endswith("shoot-a/main.lrcat-shm"):
+                raise PermissionError("denied")
+            return os.stat(path)
+
+        if name == "placeholder":
+            extra["stat"] = placeholder_stat(f"{name}/shoot-a/main.lrcat")
+        elif name == "attributes":
+            extra["stat"] = denied_stat
+        elif name == "work_inside":
+            extra["work_dir"] = os.path.join(home, "w")
+        elif name == "snapshot_link":
+            digest = hashlib.sha1(paths.norm(source).encode("utf-8")).hexdigest()[:12]
+            link = os.path.join(work, "catalogs", f"main-{digest}")
+            os.makedirs(os.path.dirname(link))
+            made = subprocess.run(["cmd", "/c", "mklink", "/J", link, home], capture_output=True, text=True)
+            self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+            self.addCleanup(os.rmdir, link)  # the link only, never the target
+        return source, extra
+
+    def test_every_path_to_unreadable_records_its_reason_in_the_row_the_csv_and_the_summary(self):
+        conn = self.conn()
+        sources = {}
+        for name in UNREADABLE_REASONS:
+            source, extra = self.build(name)
+            sources[name] = source
+            if name == "copy_failed":
+                with mock.patch("shutil.copyfile", side_effect=OSError("disk full")):
+                    ids = self.scan(conn, [os.path.dirname(source)], **extra)
+            else:
+                ids = self.scan(conn, [os.path.dirname(source)], **extra)
+            self.assertEqual(len(ids), 1, name)
+        rows = {r["source_path"]: r for r in conn.execute("SELECT * FROM catalog")}
+        cat_rows = {r["catalog"]: r for r in catalog_views.catalog_inventory_rows(conn, excluded_catalogs=[])}
+        sections = {n: [] for n in report.SECTIONS}
+        sections[1] = list(cat_rows.values())
+        coverage = {"roots": [], "limiting": [], "generated": "g", "scans": [],
+                    "catalogs": [{"catalog": s, "status": rows[s]["status"], "reason": rows[s]["reason"],
+                                  "limits_coverage": True} for s in sources.values()]}
+        out = os.path.join(self.tmp, "out")
+        report.write_report(out, sections, coverage, {n: "x" for n in report.SECTIONS})
+        with open(os.path.join(out, "summary.md"), encoding="utf-8") as handle:
+            summary = handle.read().splitlines()
+        with open(os.path.join(out, "01_catalogs.csv"), encoding="utf-8-sig", newline="") as handle:
+            csv_rows = {r["catalog"]: r for r in csv.DictReader(handle)}
+        self.assertEqual(len({rows[s]["reason"] for s in sources.values()}), len(sources), "distinct reasons")
+        for name, source in sources.items():
+            with self.subTest(name):
+                reason = rows[source]["reason"]
+                self.assertEqual(rows[source]["status"], "unreadable")
+                self.assertIn(UNREADABLE_REASONS[name], reason)
+                for other, phrase in UNREADABLE_REASONS.items():
+                    if other != name:
+                        self.assertNotIn(phrase, reason)
+                self.assertEqual(csv_rows[source]["reason"], reason)
+                self.assertEqual(csv_rows[source]["status"], "unreadable")
+                self.assertIn(f"- {source}: unreadable (limits coverage): {reason}", summary)
+
+    def test_ok_empty_and_partial_rows_keep_an_empty_reason_in_the_csv(self):
+        synth.make_catalog(self.path("r", "ok.lrcat"), [{"base": "IMG_5"}])
+        conn = self.conn()
+        self.scan(conn, [os.path.join(self.tmp, "r")])
+        rows = catalog_views.catalog_inventory_rows(conn, excluded_catalogs=[])
+        self.assertEqual([(r["status"], r["reason"]) for r in rows], [("ok", "")])
 
 
 class TestRunningProcesses(unittest.TestCase):
