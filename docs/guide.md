@@ -222,6 +222,9 @@ the full text.
   on.
 - **A sidecar whose name holds `;`** keeps its photo from leaving through a removal list: the list joins sidecars
   with `;`, so the row is held.
+- **A catalog whose file name is 248 UTF-16 units or longer** may not be readable on Windows: SQLite could not open
+  its snapshot copy in one test (SQLite 3.49). The snapshot folder fits, but the catalog is reported as `unreadable`
+  with SQLite's reason and limits coverage, so `stage` and `purge` can refuse with exit 4.
 - **A destination name of 243 UTF-16 code units or more.** `backup-plan` can list it, but `backup-run` refuses
   the manifest and names the file (exit 2). The part suffix adds 13 units to the destination name, and Windows
   allows 255 units per component. A character outside the Basic Multilingual Plane, such as an emoji, takes two

@@ -20,6 +20,11 @@
   into a library root or out of the archive root, instead of writing the copy there (rule 17).
 - `stage` and `purge` hold a row whose file cannot be read (`read_error`, naming the file) and go on with the next
   row, instead of stopping the whole run (#29).
+- Catalog file names near the 255 limit (counted in UTF-16 units, #18): the snapshot folder name always fits,
+  `stage` and `purge` no longer refuse (exit 3) for a `.lock` that cannot exist, and the reason shown for such a
+  catalog is now SQLite's own. A catalog whose file name has 248 to 255 units is still not read on Windows with
+  SQLite 3.49 (it cannot open the copy), and, being `unreadable`, it limits coverage. `catalogs` checks that
+  Lightroom is not running before it reads a `-wal` file.
 
 ## 0.1.1 - 2026-11-27
 

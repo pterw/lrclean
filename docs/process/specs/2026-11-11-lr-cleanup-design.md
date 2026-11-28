@@ -128,10 +128,13 @@ Each rule gets one test that names it.
    recorded by the catalogs that could be read; coverage incomplete", with the cause named. An `empty` catalog
    (no tables) does not count against coverage. A `partial` catalog still adds the records it yielded.
 6. **Catalog snapshots.** A catalog is copied with its `-wal` and `-shm` into its own folder under
-   `work/catalogs/`, named from the source path so that catalogs sharing a file name never collide. The copy is
+   `work/catalogs/`, named from the source path so that catalogs sharing a file name never collide. The
+   folder's name is the catalog's name without its extension, a dash and 12 hex digits; when that would exceed
+   255 UTF-16 code units the name part is cut, so the folder always fits. The copy is
    refused while a Lightroom process is running; a stale `.lock` file is not that signal and is only reported.
    The copy is opened without `immutable`, so committed write-ahead content is read. The original is opened by
-   nothing but the copy. The `catalogs` command stops with exit `2`, naming the folder, when `work/`,
+   nothing but the copy. In a scan, the Lightroom check comes after the catalog's own attributes are read and
+   before its `-wal` file is read. The `catalogs` command stops with exit `2`, naming the folder, when `work/`,
    `work/catalogs/` or a folder directly inside `work/catalogs/` is a link or junction, or any other folder the
    mover commands already refuse, before any catalog is touched. It stops the same way when `work/catalogs/`
    exists and cannot be listed, since its folders cannot then be checked; a file in its place is not that
@@ -140,7 +143,12 @@ Each rule gets one test that names it.
    is removed, created or copied by the `catalogs` command; the work database, which `main` opens before
    `catalogs` runs (`stage` and `purge` refuse a link before they open it, rule 38), is opened (and created, if new) where `work/` leads, so with `work/` itself a link it is opened inside that
    folder. A catalog whose `.lrcat`, `-wal` or `-shm` file is an online-only placeholder, or has
-   attributes that cannot be read, is not copied: it is stored as `unreadable` (rule 7). A snapshot is stale when
+   attributes that cannot be read, is not copied: it is stored as `unreadable` (rule 7). A `-wal`, `-shm` or
+   `.lock` name over 255 units cannot exist beside its catalog and is read as absent; its stat failing in any
+   other case is handled as before. Known limit: on Windows, a snapshot copy of a catalog whose file name is 248
+   UTF-16 units or longer failed to open with SQLite 3.49 (a `disk I/O error`; the threshold can differ by
+   version). The snapshot folder fits, but the catalog is stored `unreadable` with SQLite's reason and limits
+   coverage (rule 5). A snapshot is stale when
    its source's size or time has changed, when the size of its `-wal` file differs from the size recorded just
    before the copy, or when a `.lock` file has appeared since; this is checked again when the report is written,
    and a stale snapshot limits coverage (rule 5). Known limit: a `-wal` file rewritten at the same size, with the

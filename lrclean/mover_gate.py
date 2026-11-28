@@ -86,12 +86,9 @@ def _latest_catalogs(conn) -> list:
 
 def _has_lock(source: str, stat) -> bool:
     try:
-        stat(paths.fs_path(source + ".lock"))
-    except FileNotFoundError:
-        return False
+        return catalogs.neighbour_stat(source, ".lock", stat) is not None
     except OSError:
-        pass  # unreadable: fail closed, as if the lock were there
-    return True
+        return True  # unreadable: fail closed, as if the lock were there
 
 
 def _lock(cats, stat, excluded) -> str:

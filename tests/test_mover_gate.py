@@ -300,6 +300,35 @@ class WholeRunRefusalTest(unittest.TestCase):
                     self.assertEqual(refusal.code, 3)
                     self.assertIn(fx.cats[index], refusal.message)
 
+    def test_rule33_a_lock_name_too_long_to_exist_is_no_lock_and_one_that_fits_still_is_issue_18(self):
+        fx = self.fx
+        astral = "\U0001F4F7" * 123 + ".lrcat"
+
+        def stat(path):
+            if path.endswith(".lock"):
+                raise OSError(22, "invalid name")
+            return fx.w.stat(path)
+
+        cases = {"250 units": ("c" * 244 + ".lrcat", True), "251 units": ("c" * 245 + ".lrcat", False),
+                 "252 units, astral": (astral, False)}
+        self.assertEqual([paths.name_units(n + ".lock") for n, _ in cases.values()], [255, 256, 257])
+        self.assertEqual(len(astral + ".lock"), 134)
+        for name, (catalog, locked) in cases.items():
+            cat = os.path.join(os.path.dirname(fx.cats[0]), catalog)
+            fx.conn.execute('DELETE FROM "catalog"')
+            store.insert_row(fx.conn, "catalog", scan_id=1, source_path=cat, role="shoot", status="ok",
+                             size=1, mtime_ns=1, wal_bytes=0, has_lock=0)
+            fx.conn.commit()
+            for op in ("stage", "purge"):
+                with self.subTest(name, op=op):
+                    facts = fx.facts(op, stat=stat)
+                    if locked:
+                        refusal = first_refusal(op, facts, None)
+                        self.assertEqual(refusal.code, 3)
+                        self.assertIn(cat, refusal.message)
+                    else:
+                        self.assertEqual(facts.lock, "")
+
     def test_rc124_a_lock_beside_an_excluded_catalog_refuses_nothing_in_any_spelling(self):
         fx = self.fx
         fx.w.add("shoot-b/b.lrcat.lock", b"", 1)
