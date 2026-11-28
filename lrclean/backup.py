@@ -251,7 +251,7 @@ def _dest_stat(dest: str) -> tuple[int, int] | None:
     try:
         st = os.stat(paths.fs_path(dest))
     except OSError:
-        return None  # never equals a recorded pair, so a destination that is gone is not skipped
+        return None  # a destination that is gone: the end line records (0, 0)
     return st.st_size, st.st_mtime_ns
 
 
