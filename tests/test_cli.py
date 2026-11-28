@@ -2165,7 +2165,8 @@ class StageCommandTests(MoverCase):
     def test_rule44_a_held_row_is_exit_6_and_named_and_the_other_row_is_staged(self):
         def sidecar_changed():  # its sidecar changed since the list
             os.utime(self.first[3][0], ns=(MTIME, MTIME))
-            return contextlib.nullcontext(), "changed", self.first[3][0]
+            return (contextlib.nullcontext(), "changed", self.first[3][0],
+                    "changed: the file (named) changed since the list was made")
 
         def copy_unreadable():  # its first archive copy cannot be opened
             copy, real = self.first[5][0], self.w.opener
@@ -2174,22 +2175,22 @@ class StageCommandTests(MoverCase):
                 if os.path.normcase(path) == os.path.normcase(copy):
                     raise PermissionError(path)
                 return real(path)
-            return mock.patch.object(self.w, "opener", opener), "read_error", copy
+            return (mock.patch.object(self.w, "opener", opener), "read_error", copy,
+                    "read_error: a file of the row (named) could not be read, so the row stays")
 
         for cause in (sidecar_changed, copy_unreadable):
             with self.subTest(cause.__name__):
                 self.setUp()  # a fresh synthetic tree for each cause
-                patch, reason, named = cause()
+                patch, reason, named, legend = cause()
                 self.assertNotEqual(os.path.normcase(named), os.path.normcase(self.first[0]))
                 with patch:
                     code, out, _err = self.stage()
                 self.assertEqual(code, 6)
                 self.assertIn(f"held {self.first[0]} {reason}", out)
                 self.assertIn(f"    {named}", out)  # the held row names the file it is held on
-                self.assertIn(f"{reason}: {cli._REASONS[reason]}", out)
+                self.assertIn(legend, out)  # this cause's own legend line, in this cause's own output
                 self.assertTrue(os.path.exists(self.first[0]) and os.path.exists(self.staged(self.second[0])))
                 self.assertEqual([row["state"] for row in self.csv_rows(f"stage-{BATCH}.csv")], ["staged", "held"])
-        self.assertIn("read_error: a file of the row (named) could not be read, so the row stays", out)
 
     def test_rule44_a_list_of_no_row_is_exit_0(self):
         _path, sha = self.removal_list([])

@@ -14,6 +14,7 @@ from lrclean.mover_journal import Entry, Journal, JournalError, entries, read_jo
 from lrclean.mover_purge import look_all, purge_set, purge_sha256, run_purge
 from lrclean.mover_undo import RowResult
 from mover_world import BATCH, World
+from test_mover_check import FailingRead
 
 MTIME = 1_700_000_000_000_000_000
 WAIT = 10
@@ -21,25 +22,6 @@ WAIT = 10
 
 def sha_of(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
-
-
-class FailingRead:
-    """A handle that opened, whose read() fails as a bad sector would; `reads` counts the attempts."""
-    def __init__(self, handle):
-        self.handle, self.reads = handle, 0
-
-    def read(self, size=-1):
-        self.reads += 1
-        raise OSError(5, "a bad sector")
-
-    def close(self):
-        self.handle.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
 
 
 def rewrite(path: str, data: bytes, mtime_ns: int) -> None:

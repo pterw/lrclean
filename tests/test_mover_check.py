@@ -359,6 +359,11 @@ class CopyTests(CheckCase):
                              "read_error", self.reject)
         with self.subTest("a read failing after the open"):
             self.assert_read_fails_after_the_open()
+        with self.subTest("an error that is not an OSError propagates, never held as read_error"):
+            def broken(target):
+                raise ValueError(target)
+            with self.assertRaises(ValueError):
+                self.check(ctx=self.with_seams(opener=broken))
 
     def assert_read_fails_after_the_open(self):
         opened, handles = [], []
