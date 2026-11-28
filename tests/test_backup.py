@@ -150,24 +150,30 @@ class CheckManifestTest(unittest.TestCase):
         long_folder = os.path.join(self.arc, "shoot-long", *["d" * 50] * 5)
         os.makedirs(paths.fs_path(long_folder))
         long_dest = os.path.join(long_folder, "IMG_0004.ARW")
+        jlib, jout = os.path.join(self.top, "arc-jlib"), os.path.join(self.top, "arc-jout")
+        # Each row: (junction target or None, folder holding the dest, archive root or None for arc-1, refused).
         cases = {
-            "link to a folder in the archive root": ("real", "jreal", False),
-            "link to a folder outside both roots": (os.path.join("..", "elsewhere"), "jout", True),
-            "ordinary folder": (None, "shoot-a", False),
+            "link to a folder in the archive root": (os.path.join(self.arc, "real"), os.path.join(self.arc, "jreal"), None, False),
+            "link to a folder outside both roots": (os.path.join(self.top, "elsewhere"), os.path.join(self.arc, "jout"), None, True),
+            "ordinary folder": (None, os.path.join(self.arc, "shoot-a"), None, False),
+            "archive root is a link into the library": (self.lib, jlib, jlib, True),
+            "archive root is a link to a folder outside both roots": (os.path.join(self.top, "outside"), jout, jout, False),
         }
-        for name, (target, folder, refused) in cases.items():
+        for name, (target, folder, root, refused) in cases.items():
             with self.subTest(name):
                 if target is not None:
-                    real = os.path.normpath(os.path.join(self.arc, target))
-                    os.makedirs(real)
-                    self._junction(os.path.join(self.arc, folder), real)
-                dest = os.path.join(self.arc, folder, "IMG_0001.ARW")
+                    os.makedirs(target, exist_ok=True)
+                    self._junction(folder, target)
+                dest = os.path.join(folder, "IMG_0001.ARW")
+                roots = [root] if root else None
+                # Only the resolved folder can decide: the path text of the dest is outside the library.
+                self.assertFalse(backup_plan.is_inside(dest, self.lib))
                 if refused:
                     with self.assertRaises(ManifestError) as caught:
-                        self._check([self._row(dest)])
+                        self._check([self._row(dest)], archive_roots=roots)
                     self.assertIn(dest, str(caught.exception))
                 else:
-                    self.assertEqual(self._check([self._row(dest)]), 1)
+                    self.assertEqual(self._check([self._row(dest)], archive_roots=roots), 1)
         with self.subTest("existing folder over 260 characters"):
             self.assertGreater(len(long_dest), 260)
             self.assertEqual(self._check([self._row(long_dest)]), 1)
