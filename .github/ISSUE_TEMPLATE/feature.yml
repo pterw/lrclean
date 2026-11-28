@@ -1,0 +1,30 @@
+name: Feature request
+description: Something the tool should do that it does not do now.
+labels: ["feat"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste real file, folder, catalog, drive or client names: issues are public. Use synthetic names
+        such as `shoot-a` and `IMG_0001.ARW`.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and where the tool stops you.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+      description: The behaviour you want, and the command it belongs to.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Effect on files and catalogs
+      description: >-
+        Would this move, remove, copy or rewrite anything, or change what a catalog read decides? If so, say how
+        it stays undoable and checkable.

@@ -1,0 +1,21 @@
+name: Documentation
+description: The guide, README or design says something wrong, unclear or missing.
+labels: ["documentation"]
+body:
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: The file and section, e.g. docs/guide.md, "Exit codes".
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested wording
