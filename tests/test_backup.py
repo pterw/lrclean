@@ -10,7 +10,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from lrclean import hashing
+from lrclean import hashing, paths
 from lrclean.backup import (
     PART_SUFFIX,
     Journal,
@@ -743,12 +743,16 @@ class DryRunTest(unittest.TestCase):
         new = self._row("IMG_0005.ARW")
         offline = self._row("IMG_0006.ARW")
         shutil.copyfile(offline.source, offline.dest)
+        offline_verified = self._row("IMG_0007.ARW")  # verified, then turned online-only
+        shutil.copyfile(offline_verified.source, offline_verified.dest)
+        self._journal_verified(offline_verified)
 
         def attrs_of(path, _st):
-            return 0x400000 if path == offline.dest else 0
+            return 0x400000 if path in (offline.dest, offline_verified.dest) else 0
 
-        self.assertNotEqual(attrs_of(offline.dest, None), attrs_of(offline.source, None))
-        rows = [placeholder, changed, verified, exists, new, offline]
+        for row in (offline, offline_verified):
+            self.assertNotEqual(attrs_of(row.dest, None), attrs_of(row.source, None))
+        rows = [placeholder, changed, verified, exists, new, offline, offline_verified]
         before = _listing(self.top)
         got = dry_run(rows, journal_dir=self.journal_dir, n=1, attrs_of=attrs_of)
         self.assertEqual(
@@ -760,6 +764,7 @@ class DryRunTest(unittest.TestCase):
                 (3, "dest_exists"),
                 (4, "copy"),
                 (5, "dest_placeholder"),
+                (6, "dest_placeholder"),
             ],
         )
         self.assertEqual(_listing(self.top), before)
@@ -1006,19 +1011,41 @@ class RunManifestTest(unittest.TestCase):
             os.remove(row.dest)
             return "verified"
 
+        offline, unreadable = set(), set()
+
+        def attrs_of(path, _st):
+            return 0x400000 * (path in offline)
+
+        def stat(path):
+            if path in unreadable:
+                raise OSError("synthetic stat failure")
+            return os.stat(path)
+
+        def dest_becomes_placeholder(row):  # same size and time, now online-only
+            offline.add(row.dest)
+            self.assertNotEqual(attrs_of(row.dest, None), attrs_of(row.source, None))
+            return "dest_placeholder"
+
+        def dest_stat_fails(row):  # the one destination stat fails: the skip is declined
+            unreadable.add(paths.fs_path(row.dest))
+            self.assertNotIn(paths.fs_path(row.source), unreadable)
+            return "failed"
+
         cases = [
             (size_alone, {}),
             (time_alone, {}),
             (source_changes, {}),
             (dest_gone, {"content": b"", "mtime_ns": 0}),
+            (dest_becomes_placeholder, {}),
+            (dest_stat_fails, {}),
         ]
         for k, (change, row_args) in enumerate(cases):
             with self.subTest(change.__name__):
                 row = self._row(f"IMG_{k}.ARW", **row_args)
-                self._run([row])
+                self._run([row], stat=stat, attrs_of=attrs_of)
                 lines = len(self._journal())
                 expected = change(row)
-                self.assertEqual(self._run([row]).results[0].state, expected)
+                self.assertEqual(self._run([row], stat=stat, attrs_of=attrs_of).results[0].state, expected)
                 self.assertEqual(len(self._journal()), lines + 2)
                 self.assertTrue(os.path.exists(row.dest))
 

@@ -310,7 +310,8 @@ Each rule gets one test that names it.
 18. **Never overwrite.** When `dest` exists, both files are hashed in full: identical is `already_there`,
     different is `conflict`, and the destination is left as it was in both cases. A destination that is an
     online-only placeholder (rule 7) is never opened: the row is `dest_placeholder`, the destination is left
-    as it was, and the dry run says `dest_placeholder`.
+    as it was, and the dry run says `dest_placeholder`. This holds also for a row the journal records as verified:
+    the placeholder test comes before the journal skip.
 19. **A copy is verified by content.** The file is written to `<dest>.lrdup-part` in the destination folder
     while the source is hashed, then flushed to disk and closed; the part file is read again in full and its
     SHA-256 must equal the source's; the source's size and time must still equal the manifest's; only then is
@@ -320,9 +321,9 @@ Each rule gets one test that names it.
     differs from the manifest is `changed`, and nothing is written for it.
 21. **Journal.** `work/journal/backup-<n>-<started>.jsonl` gets one line before a copy starts and one when it
     ends, with the state and the SHA-256; the end line also records the source's size and time as the manifest
-    gave them. A rerun skips a row the journal records as verified only when the destination's size and time
-    still match AND the row's source size and time equal the recorded ones; a journal line without them gives no
-    skip. So a source that was edited and planned again is compared by content and ends `conflict`, never
+    gave them. A rerun skips a row the journal records as verified only when the destination is not an
+    online-only placeholder (rule 18), its size and time still match AND the row's source size and time equal the
+    recorded ones; a journal line without them gives no skip. So a source that was edited and planned again is compared by content and ends `conflict`, never
     `verified`. `backup-verify` trusts no journal.
 22. **A stalled drive ends the run.** When a read or write makes no progress for `stall_seconds` (default 120),
     the run writes the fact to the journal and exits. A part file left behind is removed by the next run before

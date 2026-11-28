@@ -258,7 +258,13 @@ def _dest_stat(dest: str) -> tuple[int, int] | None:
 def _journal_sha(row: Row, verified, stat, attrs_of) -> str:
     """The journal's SHA-256 when it vouches for the destination as it is now, else ''."""
     recorded = verified.get((paths.norm(row.source), paths.norm(row.dest)))
-    if recorded and recorded[:2] == _dest_stat(row.dest) and not source_changed(row, stat=stat, attrs_of=attrs_of):
+    if not recorded:
+        return ""
+    try:
+        st = stat(paths.fs_path(row.dest))
+    except OSError:
+        return ""  # a destination that cannot be stat'ed is not skipped
+    if recorded[:2] == (st.st_size, st.st_mtime_ns) and not _dest_placeholder(row, st, attrs_of) and not source_changed(row, stat=stat, attrs_of=attrs_of):
         if recorded[3:] == (row.bytes, row.mtime_ns):  # the source the journal verified
             return recorded[2]
     return ""
@@ -382,4 +388,4 @@ def _verdict(row: Row, verified, stat, attrs_of, exists) -> str:
         return "dest_exists"
     same = recorded is not None and recorded[:2] == (st.st_size, st.st_mtime_ns)
     same = same and recorded[3:] == (row.bytes, row.mtime_ns)  # the source the journal verified
-    return "already_verified" if same else "dest_placeholder" if _dest_placeholder(row, st, attrs_of) else "dest_exists"
+    return "dest_placeholder" if _dest_placeholder(row, st, attrs_of) else "already_verified" if same else "dest_exists"
