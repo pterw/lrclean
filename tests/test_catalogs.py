@@ -682,8 +682,10 @@ class TestRunningProcesses(unittest.TestCase):
                 else:
                     patch = mock.patch("lrclean.catalogs.subprocess.run", return_value=failure)
                 with patch:
-                    with self.assertRaises(RuntimeError):
+                    with self.assertRaises(catalogs.ProcessListUnreadable) as caught:
                         catalogs.running_processes()
+                self.assertIn("cannot list processes", str(caught.exception))
+                self.assertNotIn("is running", str(caught.exception))
 
     def test_a_failing_tasklist_is_not_read_as_nothing_running_rule_6(self):
         def fake(*args, **kw):
@@ -691,8 +693,10 @@ class TestRunningProcesses(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, "tasklist")
             return subprocess.CompletedProcess([], 1, stdout='"x.exe","1"\n')
         with mock.patch("lrclean.catalogs.subprocess.run", side_effect=fake):
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(catalogs.ProcessListUnreadable) as caught:
                 catalogs.running_processes()
+        self.assertIn("cannot list processes", str(caught.exception))
+        self.assertNotIn("is running", str(caught.exception))
 
 
 class TestFind(Tmp):
@@ -801,12 +805,20 @@ class TestRootStates(Tmp):
             asked.append(path)
             return os.stat(path)
 
-        conn = self.conn()
-        with self.assertRaises(catalogs.LightroomRunning):
-            self.scan(conn, [os.path.join(self.tmp, "r")], processes=lambda: ["lightroom.exe"], stat=recording)
-        self.assertEqual(conn.execute("SELECT status FROM scan").fetchone()[0], "partial")
-        self.assertIn(paths.fs_path(source), asked)
-        self.assertFalse([p for p in asked if p.endswith("-wal")])
+        def unreadable():
+            raise catalogs.ProcessListUnreadable("cannot list processes: x")
+
+        cases = (("running", catalogs.LightroomRunning, lambda: ["lightroom.exe"]),
+                 ("unreadable", catalogs.ProcessListUnreadable, unreadable))
+        for name, expected, processes in cases:
+            with self.subTest(cause=name), contextlib.closing(store.connect(self.path("work", f"{name}.db"))) as conn:
+                asked.clear()
+                with self.assertRaises(expected) as caught:
+                    self.scan(conn, [os.path.join(self.tmp, "r")], processes=processes, stat=recording)
+                self.assertIs(type(caught.exception), expected)
+                self.assertEqual(conn.execute("SELECT status FROM scan").fetchone()[0], "partial")
+                self.assertIn(paths.fs_path(source), asked)
+                self.assertFalse([p for p in asked if p.endswith("-wal")])
 
 
 class TestRootFolders(Tmp):

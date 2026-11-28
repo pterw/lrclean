@@ -169,20 +169,14 @@ def _library_scan_ids(conn, library_roots: list[str]) -> list[int]:
 
 def _catalogs(run: _Run) -> int:
     _refuse(mover_gate.link_refusal(run.base, run.seams.is_link, run.seams.listdir))
-    try:
-        names = run.processes()
-    except RuntimeError as exc:  # processes cannot be listed: refuse, as if Lightroom ran
-        raise catalogs.LightroomRunning(str(exc)) from exc
+    names = run.processes()
     if any(name.startswith("lightroom") for name in names):
         raise catalogs.LightroomRunning("Lightroom is running: refusing to copy a catalog")
-    try:
-        ids = catalogs.scan_catalogs(
-            run.conn, catalog_roots=run.cfg["catalog_roots"], own_dir=run.base,
-            exclude=_exclude(run), work_dir=os.path.join(run.base, "work"),
-            live_catalog=run.cfg["live_catalog"], old_states=run.cfg["old_states"],
-            processes=run.processes, now=run.now)
-    except RuntimeError as exc:
-        raise catalogs.LightroomRunning(str(exc)) from exc
+    ids = catalogs.scan_catalogs(
+        run.conn, catalog_roots=run.cfg["catalog_roots"], own_dir=run.base,
+        exclude=_exclude(run), work_dir=os.path.join(run.base, "work"),
+        live_catalog=run.cfg["live_catalog"], old_states=run.cfg["old_states"],
+        processes=run.processes, now=run.now)
     latest = _latest_catalogs(run.conn)
     bad = sum(1 for c in latest if c["status"] in ("unreadable", "partial"))
     print(f"catalogs stored: {len(ids)} ({bad} unreadable or partial)")

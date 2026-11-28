@@ -29,6 +29,8 @@
   source's time; if that cannot be set, the row stays `already_there` and one line names the file (#12).
 - A sidecar named after the whole photo name (`IMG_0001.ARW.xmp`) is matched to its photo: `rejects` lists it with its
   photo and `copies` holds a copy that has one (#11).
+- `catalogs` ends with exit 3 only for Lightroom running or an unreadable process list; any other error in a catalog
+  scan is no longer reported as "Lightroom running" (R4).
 
 ## 0.1.1 - 2026-11-27
 

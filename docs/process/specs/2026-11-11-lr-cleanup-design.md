@@ -130,8 +130,9 @@ Each rule gets one test that names it.
 6. **Catalog snapshots.** A catalog is copied with its `-wal` and `-shm` into its own folder under
    `work/catalogs/`, named from the source path so that catalogs sharing a file name never collide. The
    folder's name is the catalog's name without its extension, a dash and 12 hex digits; when that would exceed
-   255 UTF-16 code units the name part is cut, so the folder always fits. The copy is
-   refused while a Lightroom process is running; a stale `.lock` file is not that signal and is only reported.
+   255 UTF-16 code units the name part is cut, so the folder always fits. The copy is refused while a Lightroom
+   process is running, and while the list of processes cannot be read (exit `3`; the message says the list could not
+   be read, not that Lightroom runs); a stale `.lock` file is not that signal and is only reported.
    The copy is opened without `immutable`, so committed write-ahead content is read. The original is opened by
    nothing but the copy. In a scan, the Lightroom check comes after the catalog's own attributes are read and
    before its `-wal` file is read. The `catalogs` command stops with exit `2`, naming the folder, when `work/`,

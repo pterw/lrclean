@@ -30,6 +30,10 @@ class LightroomRunning(RuntimeError):
     pass
 
 
+class ProcessListUnreadable(LightroomRunning):
+    pass
+
+
 class CatalogRead(NamedTuple):
     status: str
     db_version: str
@@ -45,10 +49,10 @@ def running_processes() -> list[str]:
         done = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True,
                               text=True, timeout=30, check=True)
     except (OSError, UnicodeDecodeError, subprocess.SubprocessError) as exc:
-        raise RuntimeError(f"cannot list processes: {exc}") from exc
+        raise ProcessListUnreadable(f"cannot list processes: {exc}") from exc
     names = [row[0].lower() for row in csv.reader(done.stdout.splitlines()) if row]
     if not names:
-        raise RuntimeError("cannot list processes: tasklist returned nothing")
+        raise ProcessListUnreadable("cannot list processes: tasklist returned nothing")
     return names
 
 

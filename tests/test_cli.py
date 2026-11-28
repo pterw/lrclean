@@ -292,6 +292,13 @@ class OrderTests(CliCase):
         self.assertFalse(os.path.exists(os.path.join(self.base, "work", "catalogs")))
         self.assertEqual(self.rows("SELECT COUNT(*) FROM scan"), [(0,)])
 
+    def test_catalog_scan_reraises_an_unrelated_runtime_error(self):
+        failure = RuntimeError("boom")
+        processes = mock.Mock(side_effect=[["explorer.exe"], failure])
+        with self.assertRaises(RuntimeError) as caught:
+            self.run_cli("catalogs", processes=processes)
+        self.assertIs(caught.exception, failure)
+
     def test_steps_out_of_order_exit_with_a_message(self):
         cases = ((("inventory",), "run catalogs first"), (("hash",), "run inventory first"),
                  (("verify", self.lib), "run inventory first"), (("report",), "run inventory first"))
@@ -3072,7 +3079,8 @@ class ExitCodeTests(RejectsCase):
             ("catalogs, tasklist times out", ("catalogs",), 3, "cannot list processes", {}, None,
              {"processes": catalogs.running_processes, "error": subprocess.TimeoutExpired("tasklist", 30)}),
             ("catalogs, tasklist fails before snapshot", ("catalogs",), 3, "cannot list processes", {}, None,
-             {"processes": mock.Mock(side_effect=[["explorer.exe"], RuntimeError("cannot list processes")])}),
+             {"processes": mock.Mock(side_effect=[
+                 ["explorer.exe"], catalogs.ProcessListUnreadable("cannot list processes")])}),
             ("catalogs, work database is not a database", ("catalogs",), 6, database, {},
              ("work/lrclean.sqlite", False), {}),
             ("catalogs, work database is a folder", ("catalogs",), 6, database, {},
