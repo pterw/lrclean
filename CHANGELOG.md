@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.1.2 - 2026-11-28
+
+The mover and the backup. A row that `stage` or `purge` cannot check is held instead of dropped or stopping the run,
+and `backup-run` refuses more manifests before anything is written.
 
 - `stage` and `purge` refuse a linked tool folder, and `backup-plan` a missing archive drive, before the work
   database is opened, so nothing is created where a link leads; `undo` checks the link in `main` too (#25); a linked
