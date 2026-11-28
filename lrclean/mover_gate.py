@@ -115,7 +115,7 @@ def link_refusal(base: str, is_link, listdir) -> Refusal | None:
         try:
             entries = [os.path.join(snapshots, name) for name in listdir(snapshots)]
         except (FileNotFoundError, NotADirectoryError):
-            entries = []
+            pass
         except OSError as exc:
             return Refusal(2, f"{snapshots} cannot be listed ({exc}): its snapshot folders cannot be checked "
                               "for links")
