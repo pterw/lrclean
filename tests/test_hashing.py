@@ -159,6 +159,7 @@ class HashOneTest(Fixture):
         self.assertEqual(self.one(self.row_a), "hashed")
         self.assertIsNotNone(self.hash_row(self.row_a))
         self.assertEqual(self.one(self.row_a, stat=stat), "skipped_placeholder")
+        self.assertFalse(self.conn.in_transaction)
         self.assertEqual(self.opened, ["IMG_0001.ARW"])
         self.assertIsNone(self.hash_row(self.row_a))
 
@@ -173,6 +174,7 @@ class HashOneTest(Fixture):
         self.assertEqual(os.stat(path).st_mtime_ns, self.row_a["mtime_ns"])
         self.assertIsNotNone(self.hash_row(self.row_a))
         self.assertEqual(self.one(self.row_a, want_full=True), "changed")
+        self.assertFalse(self.conn.in_transaction)
         self.assertIsNone(self.hash_row(self.row_a))
 
     def test_hash_row_stale_in_any_column_is_not_trusted_rule_9(self):
