@@ -850,8 +850,8 @@ def _purge(run: _Run) -> int:
 
 
 def _nothing_to_purge(batch: str, looked: list) -> None:
-    open_stage = [look for entry, look in looked if entry.state == "open_stage"]  # a stage step with no `end`
-    if open_stage and all(look == "not_done" for look in open_stage):
+    # an open stage step (no `end`) that is done or unplaced is a result, so here it was never carried out
+    if any(entry.state == "open_stage" for entry, _ in looked):
         print(f"nothing to purge: the stage step of batch {batch} was never carried out; the file is at its "
               "original path (nothing to purge, nothing to undo)")
     else:
