@@ -291,7 +291,7 @@ def _require_connected(run: _Run) -> list[str]:
 
 
 def _backup_plan(run: _Run) -> int:
-    roots = _require_connected(run)
+    roots = run.cfg["archive_roots"]
     try:
         plan = backup_plan.plan_manifests(
             run.conn, library_roots=run.cfg["library_roots"], photo_root=run.cfg["photo_root"],
@@ -643,7 +643,6 @@ def _refuse(refusal) -> None:
 
 
 def _mover_ctx(run: _Run, batch: str):
-    _refuse(mover_gate.link_refusal(run.base, run.seams.is_link, run.seams.listdir))
     return mover_seams.new_ctx(run.seams, mover_seams.Folders(run.base, run.cfg["photo_root"]), run.base, batch)
 
 
@@ -967,12 +966,17 @@ def main(argv: list[str] | None = None, *, processes=catalogs.running_processes,
     db_path = os.path.join(base, "work", "lrclean.sqlite")
     conn = None
     try:
-        if args.command not in _NO_DATABASE:
-            conn = store.connect(db_path)
-        run = _Run(args, cfg, conn, base, processes, now, stat, attrs_of, exists, volume_of, free_bytes,
+        run = _Run(args, cfg, None, base, processes, now, stat, attrs_of, exists, volume_of, free_bytes,
                    clock, opener, writer, rename, abort, scandir,
                    mover_seams.Seams(stat, attrs_of, is_link, opener, rename, remove, rmdir, makedirs, listdir,
                                      append, write, clock, abort, now), [])
+        if args.command in ("stage", "undo", "purge"):
+            _refuse(mover_gate.link_refusal(base, is_link, listdir))
+        if args.command == "backup-plan":
+            _require_connected(run)
+        if args.command not in _NO_DATABASE:
+            conn = store.connect(db_path)
+            run = run._replace(conn=conn)
         return _COMMANDS[args.command](run)
     except sqlite3.DatabaseError as exc:
         return _fail(HELD, f"{args.command} stopped on a database error at {db_path} ({exc})")

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `stage` and `purge` refuse a linked tool folder, and `backup-plan` a missing archive drive, before the work
+  database is opened, so nothing is created where a link leads; `undo` checks the link in `main` too (#25); a linked
+  `work/catalogs` that cannot be listed is named as a link (R1).
+
 ## 0.1.1 - 2026-11-27
 
 Messages, refusals and exit codes. No verdict about which file may leave the drive changes.

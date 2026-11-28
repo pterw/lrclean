@@ -137,8 +137,8 @@ Each rule gets one test that names it.
    exists and cannot be listed, since its folders cannot then be checked; a file in its place is not that
    case, and each catalog is then `unreadable`. A snapshot whose folder, with links resolved,
    is or lies inside the catalog's own folder is refused as `unreadable` (rule 7). Before either refusal nothing
-   is removed, created or copied by the `catalogs` command; the work database, which every command opens first,
-   is opened (and created, if new) where `work/` leads, so with `work/` itself a link it is opened inside that
+   is removed, created or copied by the `catalogs` command; the work database, which `main` opens before
+   `catalogs` runs (`stage` and `purge` refuse a link before they open it, rule 38), is opened (and created, if new) where `work/` leads, so with `work/` itself a link it is opened inside that
    folder. A catalog whose `.lrcat`, `-wal` or `-shm` file is an online-only placeholder, or has
    attributes that cannot be read, is not copied: it is stored as `unreadable` (rule 7). A snapshot is stale when
    its source's size or time has changed, when the size of its `-wal` file differs from the size recorded just
@@ -247,7 +247,8 @@ The key is optional for the phase A subcommands and required by the three below.
 - `backup-plan` writes one manifest per archive root, `out/backup-manifest-<n>.csv` (`n` is the root's position
   in `archive_roots`), and a summary. It finds the folders by listing the tree under `photo_root` itself (the
   files scans record raw and JPEG files only), and reads the latest complete files scan of each library root
-  only to count the raws outside `photo_root`.
+  only to count the raws outside `photo_root`. It refuses, exit 2, naming the root, when the drive of an archive
+  root is not connected, before the work database is opened and before anything is written.
   - A folder is selected when it lies under `photo_root` and a photo or video file sits directly in it: its
     extension, ignoring case, is a raw one (`paths.RAW_EXTS`); `jpg` or `jpeg`; `heic`, `heif`, `png`, `tif`,
     `tiff`, `psd`, `psb`, `gif`, `webp` or `bmp`; or `mp4`, `mov`, `m4v`, `avi`, `mts`, `m2ts`, `3gp` or `mkv`.
@@ -691,7 +692,8 @@ to 27, 29 and 30) are not repeated here; B2 checks their result again but does n
     (2), Lightroom (3) and incomplete coverage (4, read from the latest `catalogs` scan as `stage` reads it); it
     skips the freshness test of rule 34 and nothing else of it, and its sources for the path tests are the original
     paths its journal records. `undo` makes none of the whole-run ones but the link test of rule 38 (rule 40). A
-    refusal changes nothing, in `out/` included, and says what to run.
+    refusal changes nothing, in `out/` included, and says what to run. The link test of rule 38 comes before every
+    refusal above, and, for `stage` and `purge`, before the work database is opened.
 34. **Fresh evidence (rule 25 again).** A run is stale when the removal list was made from scans that are not the
     latest ones. `stage` therefore requires `out/rejects-summary.md` to exist (the reject check removes it before it
     replaces the list, so a run that stopped half way leaves none) and the scans it names (kind, id) to be exactly
@@ -754,7 +756,11 @@ to 27, 29 and 30) are not repeated here; B2 checks their result again but does n
     for a journal that names one. Every path B2 writes is tested against these folders before the call, so a wrong
     path is a refusal, not a write. That test reads the spelling of a path, so the folders themselves must be what
     they say: when the tool's folder, `work`, `work/staging`, `work/journal` or `out` exists and is a junction or a
-    symbolic link, `stage`, `undo` and `purge` refuse the run, exit 2, before anything is written.
+    symbolic link, `stage`, `undo` and `purge` refuse the run, exit 2, before anything is written; `stage` and
+    `purge` do so before the work database is opened (`undo` never opens it; `catalogs` opens it first, rule 6).
+    The six folders (these five and `work/catalogs`, rule 6) are tested for a link before `work/catalogs` is
+    listed, so a link is named as a link even when its target cannot be listed; a folder that is no link and
+    cannot be listed is refused as in rule 6.
 39. **Journal.** `work/journal/mover-<batch>.jsonl` is created when `stage --apply` starts, never rewritten, only
     appended, and each line is flushed to disk before the step it announces (the writer of rule 21). Its first line
     records the batch, the list's SHA-256 and the approved one, the scan ids of rule 34 and the start time. Per file

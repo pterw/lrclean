@@ -107,15 +107,19 @@ def link_refusal(base: str, is_link, listdir) -> Refusal | None:
     included, is a link (RC-103, RC-155): a write would leave the tree."""
     work = os.path.join(base, "work")
     snapshots = os.path.join(work, "catalogs")
-    try:
-        entries = [os.path.join(snapshots, name) for name in listdir(snapshots)]
-    except (FileNotFoundError, NotADirectoryError):
-        entries = []
-    except OSError as exc:
-        return Refusal(2, f"{snapshots} cannot be listed ({exc}): its snapshot folders cannot be checked for links")
-    linked = next((folder for folder in (base, work, snapshots, os.path.join(work, "staging"),
-                                         os.path.join(work, "journal"), os.path.join(base, "out"), *entries)
-                   if is_link(folder)), "")
+    folders = (base, work, snapshots, os.path.join(work, "staging"), os.path.join(work, "journal"),
+               os.path.join(base, "out"))
+    entries = []
+    linked = next((folder for folder in folders if is_link(folder)), "")
+    if not linked:
+        try:
+            entries = [os.path.join(snapshots, name) for name in listdir(snapshots)]
+        except (FileNotFoundError, NotADirectoryError):
+            entries = []
+        except OSError as exc:
+            return Refusal(2, f"{snapshots} cannot be listed ({exc}): its snapshot folders cannot be checked "
+                              "for links")
+        linked = next((folder for folder in entries if is_link(folder)), "")
     if not linked:
         return None
     try:

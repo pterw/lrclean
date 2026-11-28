@@ -220,12 +220,34 @@ class ConfigTests(CliCase):
 
 
 class OrderTests(CliCase):
-    def test_a_link_at_work_or_its_snapshot_folders_stops_catalogs_and_the_original_is_untouched_rule_6(self):
-        def junction(link, target):
-            made = subprocess.run(["cmd", "/c", "mklink", "/J", link, target], capture_output=True, text=True)
-            self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
-            self.addCleanup(os.rmdir, link)  # the link only, never the target
+    def junction(self, link, target):
+        made = subprocess.run(["cmd", "/c", "mklink", "/J", link, target], capture_output=True, text=True)
+        self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+        self.addCleanup(os.rmdir, link)  # the link only, never the target
 
+    def test_issue25_a_linked_work_stops_stage_undo_and_purge_before_the_database_opens_rule_38(self):
+        # catalogs on the same layout proves the layout can show a database and that catalogs opens it first
+        for argv, opens in ((("stage", "absent.csv", "--approved-sha256", "0" * 64), False),
+                            (("purge", BATCH), False), (("undo", BATCH), False), (("catalogs",), True)):
+            with self.subTest(argv[0]):
+                self.setUp()  # a fresh synthetic tree for each command
+                if argv[0] == "stage":
+                    argv = (argv[0], os.path.join(self.top, argv[1]), *argv[2:])
+                work = os.path.join(self.base, "work")
+                shutil.move(os.path.join(work, "config.json"), os.path.join(self.cats, "config.json"))
+                shutil.rmtree(work)
+                self.junction(work, self.cats)
+                names = sorted(os.listdir(self.cats))
+                self.assertNotIn("lrclean.sqlite", names)
+                code, err = self.run_cli(*argv)
+                self.assertEqual(code, 2)
+                self.assertIn(work, err)
+                if opens:
+                    self.assertIn("lrclean.sqlite", os.listdir(self.cats))
+                else:
+                    self.assertEqual(sorted(os.listdir(self.cats)), names)
+
+    def test_a_link_at_work_or_its_snapshot_folders_stops_catalogs_and_the_original_is_untouched_rule_6(self):
         def original_files():
             out = {}
             for suffix in ("", "-wal", "-shm"):
@@ -252,7 +274,7 @@ class OrderTests(CliCase):
                 else:
                     os.makedirs(os.path.join(work, *linked[:-1]), exist_ok=True)
                 link = os.path.join(work, *linked)
-                junction(link, self.cats)
+                self.junction(link, self.cats)
                 before, names = original_files(), sorted(os.listdir(self.cats))
                 held = sorted(os.listdir(os.path.join(work, "catalogs"))) if listing_checked else None
                 code, err = self.run_cli("catalogs")
@@ -927,6 +949,20 @@ class BackupPlanTests(CliCase):
 
     def listing(self, root):
         return sorted((d, tuple(sorted(f))) for d, _, f in os.walk(root))
+
+    def test_issue25_a_missing_archive_drive_is_refused_before_the_database_opens(self):
+        missing = "Q:\\arch2"
+        self.assertNotEqual(os.path.splitdrive(os.path.abspath(self.arch1))[0] + "\\", "Q:\\")
+        self.volumes = {self.arch1: "x:", missing: "y:"}
+        self.write_config({**self.config, "archive_roots": [self.arch1, missing]})
+        db = os.path.join(self.base, "work", "lrclean.sqlite")
+        self.assertFalse(os.path.exists(db))
+        code, err = self.plan(exists=lambda p: p != "Q:\\")
+        self.assertEqual(code, 2)
+        self.assertIn("not connected", err)
+        self.assertIn("Q:", err)
+        self.assertFalse(os.path.exists(db))
+        self.assertFalse(os.path.exists(self.out_dir()))
 
     def test_config_without_archive_roots_still_runs_phase_a(self):
         self.write_config(self.config)

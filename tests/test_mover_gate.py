@@ -140,10 +140,29 @@ class LinkRefusalTest(unittest.TestCase):
         def unlistable(path):
             raise PermissionError(path)
 
-        with self.subTest("PermissionError"):
-            refusal = link_refusal(base, lambda path: False, unlistable)
+        catalogs = os.path.join(work, "catalogs")
+        self.assertRaises(PermissionError, unlistable, catalogs)
+        listed = []
+
+        def spy(path):
+            listed.append(path)
+            return unlistable(path)
+
+        with self.subTest("an unlinked, unlistable work/catalogs"):
+            refusal = link_refusal(base, lambda path: False, spy)
+            self.assertEqual(listed, [catalogs])
             self.assertEqual(refusal.code, 2)
-            self.assertIn(os.path.join(work, "catalogs"), refusal.message)
+            self.assertIn(catalogs, refusal.message)
+            self.assertIn("cannot be listed", refusal.message)
+        for folder in folders[:6]:
+            with self.subTest("linked before listing", folder=folder):
+                listed.clear()
+                refusal = link_refusal(base, lambda path, linked=folder: path == linked, spy)
+                self.assertEqual(listed, [])
+                self.assertEqual(refusal.code, 2)
+                self.assertIn(folder, refusal.message)
+                self.assertIn("is a link", refusal.message)
+                self.assertNotIn("cannot be listed", refusal.message)
         for folder in folders:
             with self.subTest(folder):
                 refusal = link_refusal(base, lambda path, linked=folder: path == linked, listdir)
