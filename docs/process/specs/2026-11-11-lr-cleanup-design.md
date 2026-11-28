@@ -876,6 +876,10 @@ to 27, 29 and 30) are not repeated here; B2 checks their result again but does n
     again after a step's `begin` line and between the creation of the staged file's folders and its rename, so a
     call that returns late cannot go on to a `begin`, a rename or a removal. The call that stalled may itself still
     complete after the `stalled` line; a step whose `begin` has no `end` is placed by looking (rule 40).
+    When the stall ends the run, `stage` and `purge` first write to standard error the line `batch <batch>` and, in an
+    apply run, the line `journal <path>` (a dry run of `stage` has no journal and writes only the batch line; neither
+    line is preceded by a file lookup, because the stalled drive may be the journal's); standard output is not used,
+    because a process ended this way loses what it has not flushed when its output is redirected.
 44. **Exit codes.** `0` every processed row was staged, purged or restored (or nothing was to do); `2`
     configuration, list, an invalid journal line (rule 39) or approved SHA-256 refused, or a list file, a batch's
     journal or its `start` line missing; `3` Lightroom is running or a catalog is locked; `4` the evidence is not

@@ -20,6 +20,8 @@
   into a library root or out of the archive root, instead of writing the copy there (rule 17).
 - `stage` and `purge` hold a row whose file cannot be read (`read_error`, naming the file) and go on with the next
   row, instead of stopping the whole run (#29).
+- `stage` and `purge` print the batch and the journal on stderr when a stalled drive ends the run (exit 5), as
+  `backup-run` prints its row (#30).
 - Catalog file names near the 255 limit (counted in UTF-16 units, #18): the snapshot folder name always fits,
   `stage` and `purge` no longer refuse (exit 3) for a `.lock` that cannot exist, and the reason shown for such a
   catalog is now SQLite's own. A catalog whose file name has 248 to 255 units is still not read on Windows with

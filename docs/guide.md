@@ -98,7 +98,7 @@ for that long ends the run with exit 5.
 | 2 | Configuration, list, journal or approval refused; nothing was changed |
 | 3 | Lightroom is running, the list of processes cannot be read, or a lock file lies beside a catalog that is read |
 | 4 | Evidence is stale or incomplete: the message says what to run again (`catalogs`, `inventory`, `rejects`, `copies`) |
-| 5 | A drive stalled; the journal says where the run stopped |
+| 5 | A drive stalled; `stage` and `purge` print the batch and the journal that says where the run stopped (on stderr), `backup-run` the row it stopped on |
 | 6 | Finished, but at least one row was held or refused (each named with its reason), or a file-system or work database error stopped a command (the message names the file when the system reports one) |
 
 ## The process, end to end

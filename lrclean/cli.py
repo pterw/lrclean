@@ -719,18 +719,21 @@ def _write_results(run: _Run, op: str, batch: str, ctx, journal) -> None:
     _finished(batch, journal, path)
 
 
-def _finished(batch: str, journal, results_path: str | None) -> None:
-    print(f"batch {batch}")
-    print(f"journal {journal.path}")
+def _finished(batch: str, journal, results_path: str | None, *, file=None) -> None:
+    print(f"batch {batch}", file=file)
+    if journal is not None:
+        print(f"journal {journal.path}", file=file)
     if results_path:
-        print(f"results {results_path}")
+        print(f"results {results_path}", file=file)
 
 
-def _stalled(run: _Run, batch: str, journal) -> int:
-    """A stalled run's exit; it names the batch and the journal it left, when it left one."""
-    if run.exists(journal.path):
-        _finished(batch, journal, None)
-    return STALLED
+def _with_stall_notice(ctx: mover_seams.Ctx, journal, apply: bool) -> mover_seams.Ctx:
+    """Name the batch and any journal before abort, using only facts already in hand."""
+    def abort(code):
+        _finished(ctx.batch, journal if apply else None, None, file=sys.stderr)
+        ctx.seams.abort(code)
+
+    return ctx._replace(seams=ctx.seams._replace(abort=abort))
 
 
 def _load_journal(run: _Run):
@@ -782,12 +785,13 @@ def _stage(run: _Run) -> int:
     start = {"list_sha256": computed, "approved_sha256": mover_list.approved_sha(args.approved_sha256),
              "scans": [["catalogs", s["id"]] for s in store.latest_scans(run.conn, "catalogs")]}
     journal = _open_journal(run, ctx, batch)
+    ctx = _with_stall_notice(ctx, journal, args.apply)
     outcome = mover_stage.run_stage(chosen, evidence=evidence, ctx=ctx, journal=journal, start=start,
                                     stall_seconds=args.stall_seconds, apply=args.apply, shared_paths=shared)
     print(f"SHA-256 of the list: {computed}")
     _show(outcome.results)
     if outcome.stalled:
-        return _stalled(run, batch, journal)
+        return STALLED
     if args.apply:
         _write_results(run, "stage", batch, ctx, journal)
     else:
@@ -829,6 +833,7 @@ def _purge(run: _Run) -> int:
     computed = mover_purge.purge_sha256(looked)
     approval = mover_gate.purge_approved(computed, args.approved_sha256) if args.apply else None
     _refusals(run, "purge", ctx, [entry.original for entry in entries], approval)
+    ctx = _with_stall_notice(ctx, journal, args.apply)
     results = mover_purge.run_purge(looked, roots=roots, ctx=ctx, journal=journal,
                                     start={"purge_sha256": computed}, stall_seconds=args.stall_seconds,
                                     apply=args.apply)
@@ -837,7 +842,7 @@ def _purge(run: _Run) -> int:
     if any((entry.state, look) in mover_purge.OPEN_IN_STAGING for entry, look in looked):
         print("an open stage or restore step remains in staging; undo places it")
     if ctx.stop.is_set():
-        return _stalled(run, args.batch, journal)
+        return STALLED
     if not results:
         _nothing_to_purge(args.batch, looked)
     if args.apply:

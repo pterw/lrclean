@@ -2194,8 +2194,36 @@ class MoverCase(unittest.TestCase):
 
         def finish():
             release.set()
-            workers[0].join(20)
+            for worker in workers:
+                worker.join(20)
         return mock.patch.multiple(self.w, stat=stat, clock=lambda: now[0]), finish
+
+    def ended_by_a_stall(self, argv, target):
+        patch, finish = self.stall_on(target)
+        journal = self.journal()
+        ended = []
+
+        class Ended(BaseException):
+            pass
+
+        def end(code):
+            ended.append((code, sys.stderr.getvalue(), sys.stdout.getvalue(), os.path.exists(journal)))
+            raise Ended
+
+        def exists(path):
+            if os.path.exists(journal):
+                with open(journal, encoding="utf-8") as handle:
+                    self.assertFalse(any(json.loads(line)["event"] == "stalled" for line in handle),
+                                     "the CLI looked up a path after the stall")
+            return self.w.exists(path)
+
+        try:
+            with patch:
+                with self.keywords(abort=end, exists=exists), self.assertRaises(Ended):
+                    self.w.main(*argv)
+        finally:
+            finish()
+        return ended[0]
 
 
 class StageCommandTests(MoverCase):
@@ -2215,8 +2243,7 @@ class StageCommandTests(MoverCase):
     def test_rule44_a_held_row_is_exit_6_and_named_and_the_other_row_is_staged(self):
         def sidecar_changed():  # its sidecar changed since the list
             os.utime(self.first[3][0], ns=(MTIME, MTIME))
-            return (contextlib.nullcontext(), "changed", self.first[3][0],
-                    "changed: the file (named) changed since the list was made")
+            return contextlib.nullcontext(), "changed", self.first[3][0]
 
         def copy_unreadable():  # its first archive copy cannot be opened
             copy, real = self.first[5][0], self.w.opener
@@ -2225,20 +2252,19 @@ class StageCommandTests(MoverCase):
                 if os.path.normcase(path) == os.path.normcase(copy):
                     raise PermissionError(path)
                 return real(path)
-            return (mock.patch.object(self.w, "opener", opener), "read_error", copy,
-                    "read_error: a file of the row (named) could not be read, so the row stays")
+            return mock.patch.object(self.w, "opener", opener), "read_error", copy
 
         for cause in (sidecar_changed, copy_unreadable):
             with self.subTest(cause.__name__):
                 self.setUp()  # a fresh synthetic tree for each cause
-                patch, reason, named, legend = cause()
+                patch, reason, named = cause()
                 self.assertNotEqual(os.path.normcase(named), os.path.normcase(self.first[0]))
                 with patch:
                     code, out, _err = self.stage()
                 self.assertEqual(code, 6)
                 self.assertIn(f"held {self.first[0]} {reason}", out)
                 self.assertIn(f"    {named}", out)  # the held row names the file it is held on
-                self.assertIn(legend, out)  # this cause's own legend line, in this cause's own output
+                self.assertIn(f"{reason}: {cli._REASONS[reason]}", out)
                 self.assertTrue(os.path.exists(self.first[0]) and os.path.exists(self.staged(self.second[0])))
                 self.assertEqual([row["state"] for row in self.csv_rows(f"stage-{BATCH}.csv")], ["staged", "held"])
 
@@ -2256,6 +2282,24 @@ class StageCommandTests(MoverCase):
         finish()
         self.assertEqual((code, self.w.aborted, self.w.listing()), (5, [5], before))
         self.assertFalse(os.path.exists(os.path.join(self.out, f"stage-{BATCH}.csv")))
+
+    def test_rule43_stage_names_the_batch_and_any_journal_on_stderr_before_abort(self):
+        stderr = []
+        for apply in (True, False):
+            with self.subTest(apply=apply):
+                self.setUp()
+                argv = ["stage", self.list_path, "--approved-sha256", self.sha, "--stall-seconds", "10"]
+                if apply:
+                    argv.append("--apply")
+                code, err, out, journal_exists = self.ended_by_a_stall(argv, self.first[0])
+                stderr.append(err)
+                batch, journal = f"batch {BATCH}", f"journal {self.journal()}"
+                self.assertEqual(code, 5)
+                self.assertEqual(journal_exists, apply)
+                self.assertEqual(err, f"{batch}\n{journal}\n" if apply else f"{batch}\n")
+                self.assertNotIn(batch, out)
+                self.assertNotIn(journal, out)
+        self.assertEqual(len(set(stderr)), 2)
 
     def test_rule42_a_dry_run_changes_nothing_and_prints_the_sha_and_what_apply_would_do(self):
         before = self.tree()
@@ -2722,13 +2766,24 @@ class UndoPurgeCommandTests(MoverCase):
         target = self.staged(self.first[0])
         patch, finish = self.stall_on(target)
         with patch:
-            code, out, _err = self.w.main("purge", BATCH, "--apply", "--approved-sha256", sha,
-                                          "--stall-seconds", "10")
+            code, out, err = self.w.main("purge", BATCH, "--apply", "--approved-sha256", sha,
+                                         "--stall-seconds", "10")
         finish()
         self.assertEqual((code, self.w.aborted, os.path.exists(target)), (5, [5], True))
-        self.assertIn(f"batch {BATCH}", out)  # the stalled run names the batch and the journal it left
-        self.assertIn(self.journal(), out)
+        for line in (f"batch {BATCH}", f"journal {self.journal()}"):
+            self.assertIn(line, err)
+            self.assertNotIn(line, out)
         self.assertFalse(os.path.exists(os.path.join(self.out, f"purge-{BATCH}.csv")))
+
+    def test_rule43_purge_names_the_batch_and_journal_on_stderr_before_abort(self):
+        argv = ["purge", BATCH, "--apply", "--approved-sha256", self.purge_sha(), "--stall-seconds", "10"]
+        code, err, out, journal_exists = self.ended_by_a_stall(argv, self.staged(self.first[0]))
+        batch, journal = f"batch {BATCH}", f"journal {self.journal()}"
+        self.assertEqual(code, 5)
+        self.assertTrue(journal_exists)
+        self.assertEqual(err, f"{batch}\n{journal}\n")
+        self.assertNotIn(batch, out)
+        self.assertNotIn(journal, out)
 
     def test_rule44_a_bad_batch_a_missing_journal_and_a_journal_without_a_start_line_are_exit_2(self):
         other = "20260102T000000Z"
