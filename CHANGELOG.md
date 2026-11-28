@@ -19,8 +19,9 @@ and `backup-run` refuses more manifests before anything is written.
   (`family_incomplete`, exit 6) instead of dropping it with exit 0 (#33).
 - `backup-run` refuses a manifest whose destination file name is 243 or more UTF-16 units, naming the file,
   instead of failing that row at every copy (#18).
-- `backup-run` refuses a manifest whose destination lies below a junction or link inside an archive root that leads
-  into a library root or out of the archive root, instead of writing the copy there (rule 17).
+- `backup-run` refuses a manifest whose destination lies below, or is itself, a junction or link inside an archive
+  root that leads into a library root or out of the archive root, instead of writing the copy there or setting the
+  time of the file the link leads to (rule 17).
 - `stage` and `purge` hold a row whose file cannot be read (`read_error`, naming the file) and go on with the next
   row, instead of stopping the whole run (#29).
 - `stage` and `purge` print the batch and the journal on stderr when a stalled drive ends the run (exit 5), as

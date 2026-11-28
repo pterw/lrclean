@@ -317,14 +317,15 @@ Each rule gets one test that names it.
     units (a name of 243 units or more; a character outside the Basic Multilingual Plane counts 2): the part file
     of rule 19 could not be created. The planner still lists every file but a catalog file (a folder is copied
     whole), so such a file must be renamed in the library before its manifest can run. `backup-run` also refuses
-    a `dest` whose folder, with links resolved (a junction or a symbolic link followed in the part of the path
-    that exists), is not inside its archive root or is inside a library root, both also with links resolved: the
-    copy would be written where the link leads.
+    a `dest` that, with links resolved (a junction or a symbolic link followed in the part of the path that
+    exists, the `dest` itself included), is not inside its archive root or is inside a library root, both also
+    with links resolved: the copy would be written where the link leads, and an existing `dest` that is a link
+    would have its modification time set on the file the link leads to.
 17. **Sources are read-only.** A source is opened for reading and nothing under a library root is created,
     changed, renamed or removed. The before-and-after listing of rule 15 holds for a backup run under the photo
     root; outside it, see Verification. This holds through links present when the manifest is checked: a
-    junction inside an archive root that leads into a library root is refused by rule 16, and nothing is created
-    there. A link made after that check is not seen.
+    junction inside an archive root that leads into a library root, or a `dest` that is itself a link into one, is
+    refused by rule 16, and nothing is created or changed there. A link made after that check is not seen.
     `backup-verify` refuses, before it reads anything, when the report it would write is a `source` or a `dest`
     of the manifest.
 18. **Never overwrite.** When `dest` exists, both files are hashed in full: identical is `already_there`,

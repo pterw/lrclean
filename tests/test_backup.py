@@ -134,15 +134,31 @@ class CheckManifestTest(unittest.TestCase):
         self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
         self.addCleanup(os.rmdir, link)  # the link only, never the target
 
-    def test_rule17_dest_below_a_link_into_the_library_is_refused_and_nothing_is_written(self):
+    def _file_link(self, link, target):
+        os.symlink(target, link)
+        self.assertTrue(os.path.islink(link))
+        self.addCleanup(os.remove, link)  # the link only, never the target
+
+    def test_rule17_dest_through_a_link_into_the_library_is_refused_and_nothing_is_written(self):
+        photo = os.path.join(self.lib, "shoot-a", "IMG_0001.ARW")
+        os.makedirs(os.path.dirname(photo))
+        with open(photo, "wb") as f:
+            f.write(b"raw")
+        os.makedirs(os.path.join(self.arc, "shoot-a"))
         self._junction(os.path.join(self.arc, "jlib"), self.lib)
-        dest = os.path.join(self.arc, "jlib", "shoot-a", "IMG_0001.ARW")
-        self.assertFalse(backup_plan.is_inside(dest, self.lib))  # the path text alone passes
-        lib_before, arc_before = _listing(self.lib), _listing(self.arc)
-        with self.assertRaises(ManifestError) as caught:
-            self._check([self._row(dest)])
-        self.assertIn(dest, str(caught.exception))
-        self.assertEqual((_listing(self.lib), _listing(self.arc)), (lib_before, arc_before))
+        below_junction = os.path.join(self.arc, "jlib", "shoot-a", "IMG_0001.ARW")
+        file_link = os.path.join(self.arc, "shoot-a", "IMG_0001.ARW")
+        self._file_link(file_link, photo)
+        for name, dest in {"dest below a junction into the library": below_junction, "dest is a file link to a library photo": file_link}.items():
+            with self.subTest(name):
+                self.assertFalse(backup_plan.is_inside(dest, self.lib))  # the path text alone passes
+                lib_before, arc_before = _listing(self.lib), _listing(self.arc)
+                mtime_before = os.stat(photo).st_mtime_ns
+                with self.assertRaises(ManifestError) as caught:
+                    self._check([self._row(dest)])
+                self.assertIn(dest, str(caught.exception))
+                self.assertEqual((_listing(self.lib), _listing(self.arc)), (lib_before, arc_before))
+                self.assertEqual(os.stat(photo).st_mtime_ns, mtime_before)
 
     def test_rule17_dest_below_a_link_is_refused_only_when_it_leads_out_of_the_archive_root(self):
         long_folder = os.path.join(self.arc, "shoot-long", *["d" * 50] * 5)
@@ -169,7 +185,7 @@ class CheckManifestTest(unittest.TestCase):
                 dest = os.path.join(folder, "IMG_0001.ARW")
                 roots = [root] if root else None
                 libraries = [lib_link] if name == "library root is a link to the library" else None
-                # Only the resolved folder can decide: the path text of the dest is outside the library.
+                # Only the resolved dest can decide: the path text of the dest is outside the library.
                 self.assertFalse(backup_plan.is_inside(dest, self.lib))
                 self.assertFalse(backup_plan.is_inside(dest, lib_link))
                 if refused:
@@ -181,6 +197,16 @@ class CheckManifestTest(unittest.TestCase):
         with self.subTest("existing folder over 260 characters"):
             self.assertGreater(len(long_dest), 260)
             self._check([self._row(long_dest)])
+        with self.subTest("dest is a file link to another file in the archive root"):
+            target = os.path.join(self.arc, "shoot-b", "IMG_0002.ARW")
+            os.makedirs(os.path.dirname(target))
+            with open(target, "wb") as f:
+                f.write(b"raw")
+            file_link = os.path.join(self.arc, "shoot-c", "IMG_0001.ARW")
+            os.makedirs(os.path.dirname(file_link))
+            self._file_link(file_link, target)
+            self.assertNotEqual(norm(file_link), norm(target))
+            self._check([self._row(file_link)])
 
     def test_rule16_free_space_boundary_equal_passes_one_above_raises(self):
         rows = [
