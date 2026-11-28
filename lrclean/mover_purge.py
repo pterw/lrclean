@@ -12,6 +12,8 @@ from lrclean.mover_list import MAIN_KINDS
 from lrclean.mover_seams import Ctx, allowed, guard, watch
 from lrclean.mover_undo import RowResult
 
+OPEN_IN_STAGING: frozenset[tuple[str, str]] = frozenset({("open_stage", "done"), ("open_restore", "not_done")})
+
 # an entry that counts toward its family: its `end` says staged or purged, or a purge began and was looked at
 _COUNTED = ("staged", "purged", "open_purge")
 
@@ -143,7 +145,8 @@ def _rows(looked: list[tuple[Entry, str]]) -> list[list[tuple[Entry, str]]]:
     for entry, look in looked:
         rows.setdefault(entry.row, []).append((entry, look))
     return [group for group in rows.values()
-            if any(_staged_now(entry, look) or look == "unplaced" for entry, look in group)]
+            if any(_staged_now(entry, look) or look == "unplaced"
+                   or (entry.state, look) in OPEN_IN_STAGING for entry, look in group)]
 
 
 def run_purge(looked: list[tuple[Entry, str]], *, roots, ctx: Ctx, journal: Journal, start: dict,

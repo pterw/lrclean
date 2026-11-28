@@ -2527,17 +2527,52 @@ class UndoPurgeCommandTests(MoverCase):
         code, out, _err = self.w.main("undo", BATCH, "--apply")
         self.assertEqual((code, self.rows_in(out, "restored")), (0, 2))
 
-    def test_rule41_nothing_to_purge_with_an_open_stage_step_is_told_by_where_the_file_is(self):
+    def test_rule41_purge_holds_an_open_stage_or_restore_step_with_its_file_in_staging(self):
         self.assertEqual(self.w.main("undo", BATCH, "--apply")[0], 0)
+        restored = self.journal_lines()
         self.append_begin_of_second("stage")  # a stage step with no `end`; its file is at the original
         code, out, _err = self.w.main("purge", BATCH)
         self.assertEqual(code, 0)  # never carried out: nothing to purge and nothing to undo
         self.assertRegex(out, r"(?is)nothing to purge.*never carried out.*original path")
         self.assertNotRegex(out, r"(?i)\bundo\b.*places")
-        os.replace(self.second[0], self.staged(self.second[0]))  # now the rename did run: undo must place it
+
+        source = self.second[0]
+        staged = self.staged(source)
+        advice = "an open stage or restore step remains in staging; undo places it"
+        for op in ("stage", "restore"):
+            with self.subTest(op=op):
+                os.replace(source, staged)
+                code, out, err = self.w.main("purge", BATCH)
+                self.assertEqual(code, 6)
+                self.assertIn(f"held {source} family_incomplete", out)
+                self.assertEqual(out.splitlines().count(advice), 1)
+                self.assertLess(out.index(f"held {source}"), out.index(advice))
+                self.assertIn("1 row(s) held", err)
+                self.assertIn("files that --apply would delete:\ntotal 0 bytes would be freed", out)
+                self.assertIn(hashlib.sha256(b"").hexdigest(), out)
+            if op == "stage":
+                self.write_journal(restored)
+                os.replace(staged, source)
+                self.append_begin_of_second("restore")
+
+        results_name = f"purge-{BATCH}.csv"
+        code, out, err = self.w.main("purge", BATCH, "--apply", "--approved-sha256", self.purge_sha())
+        self.assertEqual(code, 6)
+        self.assertIn("1 row(s) held", err)
+        self.assertTrue(os.path.exists(staged))
+        self.assertFalse(os.path.exists(source))
+        row, = self.csv_rows(results_name)
+        self.assertEqual((row["source"], row["state"], row["reason"]), (source, "held", "family_incomplete"))
+        self.assertIn(f"batch {BATCH}", out)
+        self.assertIn(f"journal {self.journal()}", out)
+        self.assertIn(f"results {os.path.join(self.out, results_name)}", out)
+
+        self.assertEqual(self.w.main("undo", BATCH, "--apply")[0], 0)
+        self.assertTrue(os.path.exists(source))
+        self.assertFalse(os.path.exists(staged))
         code, out, _err = self.w.main("purge", BATCH)
         self.assertEqual(code, 0)
-        self.assertRegex(out, r"(?is)nothing to purge.*open stage step.*\bundo\b.*places")
+        self.assertIn(f"no file of batch {BATCH} is staged any more", out)
 
     def test_rule40_undo_of_a_stage_step_that_never_ran_skips_the_row_and_says_why(self):
         self.assertEqual(self.w.main("undo", BATCH, "--apply")[0], 0)

@@ -140,7 +140,8 @@ again; see [Limits](#limits) for one example.
    list; after an edit, run `copies` again.
 
 If a run is interrupted, run the same command again: the journal records every step before it happens, and
-`undo` and `purge` place an unfinished step by looking at the disk.
+`undo` and `purge` place an unfinished step by looking at the disk. `purge` never deletes a file whose `stage` or
+`restore` step did not finish and that is still in staging: it holds the row (exit 6) and says that `undo` places it.
 
 ## Reject check verdicts
 

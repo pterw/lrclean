@@ -835,6 +835,8 @@ def _purge(run: _Run) -> int:
                                     apply=args.apply)
     print(f"SHA-256 of the purge set: {computed}")
     _show(results)
+    if any((entry.state, look) in mover_purge.OPEN_IN_STAGING for entry, look in looked):
+        print("an open stage or restore step remains in staging; undo places it")
     if ctx.stop.is_set():
         return _stalled(run, args.batch, journal)
     if not results:
@@ -851,9 +853,6 @@ def _nothing_to_purge(batch: str, looked: list) -> None:
     if open_stage and all(look == "not_done" for look in open_stage):
         print(f"nothing to purge: the stage step of batch {batch} was never carried out; the file is at its "
               "original path (nothing to purge, nothing to undo)")
-    elif open_stage:
-        print(f"nothing to purge: no file of batch {batch} is staged, but an open stage step remains;"
-              " undo places it")
     else:
         print(f"nothing to purge: no file of batch {batch} is staged any more")
 

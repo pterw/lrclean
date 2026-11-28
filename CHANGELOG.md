@@ -12,6 +12,8 @@
   `verify` no longer selects it from an old sample; its stored hash is removed when `hash` finds it (#24).
 - `verify` counts each corrupted copy as a mismatch, also when another copy of the file is exact, and section 5 of
   `summary.md` totals the library's raws and the backup-only raws apart (#28).
+- `purge` holds a row whose only files are still in staging under a `stage` or `restore` step that never finished
+  (`family_incomplete`, exit 6) instead of dropping it with exit 0 (#33).
 
 ## 0.1.1 - 2026-11-27
 

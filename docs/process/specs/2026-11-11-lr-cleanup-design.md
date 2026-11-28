@@ -821,7 +821,12 @@ to 27, 29 and 30) are not repeated here; B2 checks their result again but does n
     the number of files of its family: a family of which fewer files are staged (as defined at the top of this rule)
     or were purged by an earlier `purge` than that number is held (`family_incomplete`), as after a crash between
     the reject's rename and a sidecar's, and nothing of it is deleted; a `stage` `begin` with no `end` counts as not
-    staged even when looking places it as done, so its family is held. A `begin` that cannot be placed (rule 40)
+    staged even when looking places it as done, so its family is held. The same holds for a `restore` `begin` with
+    no `end` that looking places as not done (the file is still staged): its row is held `family_incomplete`, exit
+    `6`, and `purge` says that `undo` places the step; neither is dropped as nothing to purge. A `stage` `begin`
+    placed as not done and a `restore` `begin` placed as done leave the file at its original path. Neither entry
+    on its own brings a row into `purge`'s checks. A staged file, an open step whose file is in staging, or an
+    unplaced entry still brings the row into the checks. A `begin` that cannot be placed (rule 40)
     holds its row (`unplaced`). One failure holds the whole row (`staged_changed`, `archive_mismatch`,
     `twin_mismatch`, `family_incomplete`, `unplaced`, `outside_folders`) and nothing of it is deleted; the command
     goes on with the other rows. Right before the first deletion of a row, every file its checks read (each staged

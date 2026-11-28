@@ -425,6 +425,43 @@ class PurgeFamilyTests(unittest.TestCase):
             held, = [line for line in fx.lines() if line["event"] == "held"]
             self.assertEqual((held["reason"], held["file"], held["kind"]), ("unplaced", lost.original, "reject"))
 
+    def test_rule_41_a_row_of_open_steps_is_held_when_its_files_are_in_staging(self):
+        for state, in_staging, placement in (("open_stage", True, "done"),
+                                             ("open_stage", False, "not_done"),
+                                             ("open_restore", True, "not_done"),
+                                             ("open_restore", False, "done")):
+            for size in (1, 2):
+                with self.subTest(state=state, in_staging=in_staging, size=size), fixture() as fx:
+                    control = fx.family(1)
+                    names = [("IMG_0004.ARW", "reject"), ("IMG_0004.xmp", "sidecar")]
+                    opened = [fx.stage(f"shoot-4/{name}", 4, kind, size)._replace(state=state)
+                              for name, kind in names[:size]]
+                    for entry in opened:
+                        self.assertNotEqual(entry.row, control[0].row)
+                        self.assertNotEqual(entry.family, control[0].family)
+                        if not in_staging:
+                            os.rename(entry.staged, entry.original)
+                        self.assertEqual((os.path.exists(entry.original), os.path.exists(entry.staged)),
+                                         (not in_staging, in_staging))
+                    looked = look_all(opened + control, fx.ctx)
+                    self.assertEqual([look for _, look in looked[:size]], [placement] * size)
+                    expected = [(1, "purged", "")]
+                    if in_staging:
+                        expected.insert(0, (4, "held", "family_incomplete"))
+                    results = fx.purge_looked(looked)
+                    self.assertEqual([(r.index, r.state, r.reason) for r in results], expected)
+                    self.assertTrue(all(fx.gone(entry) for entry in control))
+                    held = [line for line in fx.lines() if line["event"] == "held"]
+                    if in_staging:
+                        reject = opened[0].original
+                        self.assertEqual(results[0], RowResult(4, reject, "held", "family_incomplete", (reject,)))
+                        self.assertEqual([(h["reason"], h["kind"], h["file"]) for h in held],
+                                         [("family_incomplete", "reject", reject)])
+                        self.assertTrue(fx.untouched(opened))
+                    else:
+                        self.assertEqual(held, [])
+                        self.assertTrue(all(os.path.exists(entry.original) for entry in opened))
+
     def test_rule_41_a_second_purge_after_a_crash_that_deleted_the_sidecars_only_finishes_the_family(self):
         # the crash is at the reject's remove (both sidecars have their `end`), or after the last sidecar's
         # remove and before its `end` line (that sidecar stays an open purge whose file is gone: it still counts)
