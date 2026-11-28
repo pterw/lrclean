@@ -125,7 +125,8 @@ class ReportTest(unittest.TestCase):
         text = self.summary()
         self.assertTrue(text.startswith("# Coverage"))
         for needle in ("E:/part-root: partial", "cat-limit.lrcat: unreadable (limits coverage)",
-                       "cat-limit.lrcat is unreadable", "Rows: 0", "Bytes: 0", "Bytes year: 0", "Bytes backup_only: 0", "limit sentence 11",
+                       "cat-limit.lrcat is unreadable", "Rows: 0", "Bytes: 0", "Bytes year: 0",
+                       "Bytes backup_only: 0", "limit sentence 11",
                        "\nGenerated: 2026-02-03T04:05:06Z\n", "\n## Scans\n",
                        "\n- catalogs scan 1 of D:/cats: complete, finished 2026-02-03T01:00:00Z\n",
                        "\n- files scan 2 of E:/part-root: partial, finished 2026-02-03T02:00:00Z\n"):
