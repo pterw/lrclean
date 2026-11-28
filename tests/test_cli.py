@@ -1651,36 +1651,40 @@ class RejectsRunTests(RejectsCase):
         self.assertEqual(self.go()[0], 0)
         self.assertEqual(self.verdicts(), ["on_list"])
         side, data = os.path.join(self.lib, "shoot-a", "IMG_0001.ARW.xmp"), b"s" * 7
-        self.assertNotEqual(len(data), 100)
-        synth.make_tree(self.lib, {"shoot-a/IMG_0001.ARW.xmp": data})
+        acr, acr_data = os.path.join(self.lib, "shoot-a", "IMG_0001.ARW.acr"), b"a" * 3
+        self.assertNotIn(len(acr_data), (len(data), 100))
+        synth.make_tree(self.lib, {"shoot-a/IMG_0001.ARW.xmp": data, "shoot-a/IMG_0001.ARW.acr": acr_data})
         self.assertEqual(self.run_cli("inventory")[0], 0)
         con = sqlite3.connect(os.path.join(self.base, "work", "lrclean.sqlite"))
         try:
-            spelled = {r[0] for r in con.execute("SELECT path_orig FROM file WHERE ext = 'xmp'")}
+            spelled = {r[1]: r[0] for r in con.execute("SELECT path_orig, ext FROM file WHERE ext IN ('xmp', 'acr')")}
         finally:
             con.close()
-        self.assertEqual(len(spelled), 1)
-        spelled = spelled.pop()
+        self.assertEqual(sorted(spelled), ["acr", "xmp"])
+        spelled_acr, spelled = spelled["acr"], spelled["xmp"]
         self.assertEqual(self.go()[0], 0)
         row = self.table("rejects.csv")[0]
         self.assertEqual(row["verdict"], "outside_backup")
-        self.assertIn(f"held by: {spelled}", row["how_decided"])
+        self.assertEqual(row["how_decided"].partition("; held by: ")[2], spelled_acr)  # first in path order
         raw = os.path.join(self.lib, "shoot-a", "IMG_0001.ARW")
-        st_raw, st_side = os.stat(raw), os.stat(side)
+        st_raw, st_side, st_acr = os.stat(raw), os.stat(side), os.stat(acr)
         for n, arch in enumerate(self.arch, start=1):
-            dests = [os.path.join(arch, "shoot-a", name) for name in ("IMG_0001.ARW", "IMG_0001.ARW.xmp")]
-            synth.make_tree(arch, {"shoot-a/IMG_0001.ARW.xmp": data})
+            dests = [os.path.join(arch, "shoot-a", name)
+                     for name in ("IMG_0001.ARW", "IMG_0001.ARW.xmp", "IMG_0001.ARW.acr")]
+            synth.make_tree(arch, {"shoot-a/IMG_0001.ARW.xmp": data, "shoot-a/IMG_0001.ARW.acr": acr_data})
             backup_plan.write_manifest(os.path.join(self.out_dir(), f"backup-manifest-{n}.csv"), [
                 backup_plan.Row(raw, dests[0], 100, st_raw.st_mtime_ns, "copy", ""),
-                backup_plan.Row(side, dests[1], 7, st_side.st_mtime_ns, "copy", "")])
+                backup_plan.Row(side, dests[1], 7, st_side.st_mtime_ns, "copy", ""),
+                backup_plan.Row(acr, dests[2], 3, st_acr.st_mtime_ns, "copy", "")])
             backup_verify.write_verified(os.path.join(self.out_dir(), f"backup-verified-{n}.csv"), [
                 backup_verify.Verified(raw, dests[0], 100, "0" * 64, "identical"),
-                backup_verify.Verified(side, dests[1], 7, "1" * 64, "identical")])
+                backup_verify.Verified(side, dests[1], 7, "1" * 64, "identical"),
+                backup_verify.Verified(acr, dests[2], 3, "2" * 64, "identical")])
         self.assertEqual(self.run_cli("inventory")[0], 0)
         self.assertEqual(self.go()[0], 0)
         self.assertEqual(self.verdicts(), ["on_list"])
         listed = self.table("reject-removal-list.csv")
-        self.assertEqual([(r["sidecars"], r["sidecar_bytes"]) for r in listed], [(spelled, "7")])
+        self.assertEqual([(r["sidecars"], r["sidecar_bytes"]) for r in listed], [(f"{spelled_acr};{spelled}", "10")])
 
     def test_no_reject_writes_headers_only(self):
         self.catalog_of(self.live, [(1, 0), (2, 0)])

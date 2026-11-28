@@ -207,17 +207,27 @@ class SidecarsTest(unittest.TestCase):
         self.assertEqual(sidecars_of([v], P), {})
 
     def test_sidecar_named_after_the_whole_photo_name_is_returned_beside_the_base_name_one(self):
-        double = P + ".xmp"
-        cases = {"double only": [double], "both": [double, SIDE]}
-        for name, sides in cases.items():
+        jpg = "d:/lib/shoot-a/img_0001.jpg"
+        cases = {"raw .xmp only": (P, [P + ".xmp"]), "raw .xmp beside the base name one": (P, [P + ".xmp", SIDE]),
+                 "raw .acr": (P, [P + ".acr"]), "jpeg .xmp": (jpg, [jpg + ".xmp"])}
+        for name, (photo, sides) in cases.items():
             with self.subTest(name):
-                self.assertEqual(sidecars_of([self.rejecting("a", sides)], P), {s: s for s in sides})
+                self.assertNotIn(photo, sides)
+                v = self.rejecting("a", sides, picks={photo: [-1]})
+                self.assertEqual(sidecars_of([v], photo), {s: s for s in sides})
 
     def test_dotted_photo_name_is_not_the_sidecar_owner_of_its_first_part(self):
-        dotted, short = "d:/lib/shoot-a/shoot.2019.arw", "d:/lib/shoot-a/shoot.xmp"
-        self.assertNotEqual(base_index([dotted]).keys(), base_index([short]).keys())
-        v = self.rejecting("a", [short], picks={dotted: [-1]})
-        self.assertEqual(sidecars_of([v], dotted), {})
+        dotted, short = "d:/lib/shoot-a/shoot.2019.arw", "d:/lib/shoot-a/shoot.arw"
+        cases = {"dotted photo, first-part sidecar": (dotted, "d:/lib/shoot-a/shoot.xmp", {}),
+                 "first-part photo, dotted sidecar": (short, "d:/lib/shoot-a/shoot.2019.xmp", {}),
+                 "dotted photo, its own sidecar": (dotted, "d:/lib/shoot-a/shoot.2019.xmp",
+                                                   {"d:/lib/shoot-a/shoot.2019.xmp": "d:/lib/shoot-a/shoot.2019.xmp"}),
+                 "photo-named jpeg is no sidecar of the raw": (P, P + ".jpg", {})}
+        for name, (photo, side, want) in cases.items():
+            with self.subTest(name):
+                self.assertNotEqual(photo, side)
+                v = self.rejecting("a", [side], picks={photo: [-1]})
+                self.assertEqual(sidecars_of([v], photo), want)
 
     def test_files_scan_adds_only_the_whole_name_sidecars_with_their_spelling(self):
         xmp, acr = "D:/Lib/shoot-a/IMG_0001.ARW.xmp", "D:/Lib/shoot-a/img_0001.arw.ACR"

@@ -240,18 +240,19 @@ class ReasonTest(unittest.TestCase):
         excluded = ("shoot", {"photos": [N(X)], "excluded": True})
         other_xmp = ("old_state", {"sidecars": [N("C:/lib/shoot-x/IMG_0002.xmp")]})
         jpeg_listed = ("old_state", {"sidecars": [N(X.replace(".ARW", ".JPG"))]})
-        for name, (role, kw) in {"old state": old_state, "excluded catalog": excluded, "another base name": other_xmp,
-                                 "a JPEG listed as a sidecar": jpeg_listed,
-                                 "a dotted name's first part": ("old_state", {})}.items():
+        dotted = "C:/lib/shoot-x/IMG_0001.2019.ARW"
+        self.assertNotEqual(dotted, X)
+        cases = {"old state": (old_state, X, ()), "excluded catalog": (excluded, X, ()),
+                 "another base name": (other_xmp, X, ("C:/lib/shoot-x/IMG_0002.XMP",)),
+                 "a JPEG listed as a sidecar": (jpeg_listed, X, ()),
+                 "a dotted name's first part": (("old_state", {}), dotted, ("C:/lib/shoot-x/IMG_0001.XMP",))}
+        for name, ((role, kw), file, extra) in cases.items():
             with self.subTest(name):
                 scene = base()
-                file = "C:/lib/shoot-x/IMG_0001.2019.ARW" if name == "a dotted name's first part" else X
                 scene.add(file)
                 scene.cat(role, **kw)
-                if name == "another base name":
-                    scene.row("C:/lib/shoot-x/IMG_0002.XMP")
-                if name == "a dotted name's first part":
-                    scene.row("C:/lib/shoot-x/IMG_0001.XMP")
+                for row in extra:
+                    scene.row(row)
                 built = scene.build()
                 self.assertEqual(listed(built), [COPY, file])
                 self.assertEqual(held(built), Counter({"recorded": 1}))
