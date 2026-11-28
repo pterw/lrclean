@@ -14,12 +14,12 @@ import synth
 from lrclean import catalog_views, catalogs, paths, report, store
 
 NONE_RUNNING = lambda: []  # noqa: E731
-ASTRAL = "\U0001F4F7" * 123 + ".lrcat"  # 252 UTF-16 units, 129 characters
+ASTRAL = "\U0001F4F7\U0001F4F8\U0001F4F9" * 41 + ".lrcat"  # 252 UTF-16 units, 129 characters
 
 
 def name_of(units):
-    """A catalog file name of exactly `units` UTF-16 units."""
-    return "c" * (units - len(".lrcat")) + ".lrcat"
+    """A catalog file name of exactly `units` UTF-16 units; its stem cycles a to z, so its two ends differ."""
+    return "".join(chr(ord("a") + i % 26) for i in range(units - len(".lrcat"))) + ".lrcat"
 
 
 def invalid_for(suffix, source, size=7, mtime_ns=11):
@@ -277,6 +277,16 @@ class TestSnapshot(Tmp):
         self.assertEqual(os.listdir(denied_work), [])
         self.assertEqual([tuple(r) for r in conn.execute("SELECT status, snapshot_path FROM catalog")],
                          [("unreadable", "")])
+        source = os.path.join(self.tmp, "shoot-b", name_of(249))
+        for suffix in ("-wal", "-shm"):
+            with self.subTest(fitting=suffix):
+                self.assertLessEqual(paths.name_units(name_of(249) + suffix), paths.NAME_LIMIT)
+                with mock.patch("shutil.copyfile") as copy:
+                    with self.assertRaises(ValueError) as caught:
+                        catalogs.snapshot_catalog(source, self.work, NONE_RUNNING, stat=invalid_for(suffix, source))
+                copy.assert_not_called()
+                self.assertIn(source + suffix, str(caught.exception))
+        self.assertFalse(os.path.exists(os.path.join(self.work, "catalogs")))
 
     def make_pair(self):
         """Two catalogs of different names and sizes; returns the sources of shoot-a and shoot-b."""
@@ -361,34 +371,30 @@ class TestSnapshot(Tmp):
                     self.assertGreater(paths.name_units(uncut), paths.NAME_LIMIT)
                 snap = catalogs.snapshot_catalog(source, self.work, NONE_RUNNING)
                 folder = os.path.basename(os.path.dirname(snap))
+                stem = os.path.splitext(name)[0]
+                keep = max(k for k in range(len(stem) + 1)
+                           if paths.name_units(f"{stem[:k]}-{digest}") <= paths.NAME_LIMIT)
+                if units != 248:
+                    self.assertNotEqual(stem[:keep], stem[len(stem) - keep:])  # a cut from the front differs
+                if units in (249, 255):
+                    self.assertEqual((len(stem) - keep) % 2, 1)  # a cut two at a time misses `keep`
+                self.assertEqual(folder, f"{stem[:keep]}-{digest}")
                 self.assertLessEqual(paths.name_units(folder), paths.NAME_LIMIT)
-                self.assertTrue(folder.endswith("-" + digest))
                 if units == 248:
                     self.assertEqual(folder, uncut)
                 with open(paths.fs_path(snap), "rb") as copy, open(paths.fs_path(source), "rb") as original:
                     self.assertEqual(copy.read(), original.read())
                 self.assertEqual(catalogs.snapshot_catalog(source, self.work, NONE_RUNNING), snap)
 
-    def test_a_fitting_neighbour_whose_stat_fails_refuses_the_copy_issue_18(self):
-        source = os.path.join(self.tmp, "shoot-a", name_of(249))
-        for suffix in ("-wal", "-shm"):
-            with self.subTest(suffix=suffix):
-                self.assertLessEqual(paths.name_units(name_of(249) + suffix), paths.NAME_LIMIT)
-                with mock.patch("shutil.copyfile") as copy:
-                    with self.assertRaises(ValueError) as caught:
-                        catalogs.snapshot_catalog(source, self.work, NONE_RUNNING, stat=invalid_for(suffix, source))
-                copy.assert_not_called()
-                self.assertIn(source + suffix, str(caught.exception))
-        self.assertFalse(os.path.exists(os.path.join(self.work, "catalogs")))
-
-    def test_a_catalog_name_of_247_units_is_read_and_248_is_unreadable_with_sqlite_reason_issue_18(self):
-        short, long = name_of(247), name_of(248)
-        sources = {247: self.long_copy("shoot-247", short), 248: self.long_copy("shoot-248", long)}
+    def test_a_catalog_name_of_247_units_is_read_and_248_to_255_are_unreadable_with_sqlite_reason_issue_18(self):
+        sources = {u: self.long_copy(f"shoot-{u}", name_of(u)) for u in (247, 248, 252, 255)}
+        unread = tuple(name_of(u) for u in (248, 252, 255))
+        self.assertGreater(paths.name_units(name_of(252) + "-wal"), paths.NAME_LIMIT)
         conn = self.conn()
         real_connect = sqlite3.connect
 
         def connect(path, *args, **kwargs):
-            if str(path).endswith(long):
+            if str(path).endswith(unread):
                 raise sqlite3.OperationalError("disk I/O error")
             return real_connect(path, *args, **kwargs)
 
@@ -398,10 +404,12 @@ class TestSnapshot(Tmp):
         self.assertEqual(rows[247]["status"], "ok")
         self.assertGreater(conn.execute("SELECT COUNT(*) FROM record WHERE catalog_id = ?",
                                         (rows[247]["id"],)).fetchone()[0], 0)
-        self.assertEqual((rows[248]["status"], rows[248]["has_lock"]), ("unreadable", 0))
-        self.assertNotEqual(rows[248]["snapshot_path"], "")
-        self.assertTrue(rows[248]["reason"].startswith("SQLite cannot read the copy of the catalog: "))
-        self.assertNotIn("the attributes of", rows[248]["reason"])
+        for units in (248, 252, 255):
+            with self.subTest(units=units):
+                self.assertEqual((rows[units]["status"], rows[units]["has_lock"]), ("unreadable", 0))
+                self.assertNotEqual(rows[units]["snapshot_path"], "")
+                self.assertTrue(rows[units]["reason"].startswith("SQLite cannot read the copy of the catalog: "))
+                self.assertNotIn("the attributes of", rows[units]["reason"])
 
     def test_lightroom_listed_refuses_before_copy_rule_6(self):
         source = self.path("a", "main.lrcat")
