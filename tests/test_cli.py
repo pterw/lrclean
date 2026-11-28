@@ -1202,7 +1202,7 @@ class BackupRunTests(BackupCase):
         self.assertEqual(len(self.stdout.splitlines()), 2)
         self.assertIn(" copy ", self.stdout)
 
-    def test_dry_run_reads_free_space_only_from_the_second_archive_root(self):
+    def test_a_manifest_for_the_second_archive_root_reads_its_space_and_writes_its_journal(self):
         self.write_manifest(["IMG_0001.ARW", "IMG_0002.ARW"], dest_root=self.arch2)
         synth.make_tree(self.arch2, {"shoot-a/IMG_0001.ARW": b"a" * 100})
         dest_exists = os.path.join(self.arch2, "shoot-a", "IMG_0001.ARW")
@@ -1222,6 +1222,14 @@ class BackupRunTests(BackupCase):
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(self.stdout.splitlines(), [f"0 dest_exists {dest_exists}", f"1 copy {dest_to_copy}"])
         self.assertEqual(reads, [self.arch2])
+
+        code, err = self.go("backup-run", self.manifest, "--apply", free_bytes=free_bytes)
+        self.assertEqual((code, err), (0, ""))
+        names = os.listdir(self.journal_dir)
+        self.assertEqual(len(names), 1, names)
+        self.assertTrue(names[0].startswith("backup-2-"), names[0])
+        self.assertTrue(os.path.isfile(os.path.join(self.journal_dir, names[0])), names[0])
+        self.assertEqual(set(reads), {self.arch2})
 
     def test_apply_copies_a_clean_tree_with_exit_zero_and_a_tally(self):
         code, err = self.go("backup-run", self.manifest, "--apply")

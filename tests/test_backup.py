@@ -193,21 +193,30 @@ class CheckManifestTest(unittest.TestCase):
             self._check(rows, free=9)
 
     def test_rule16_free_space_is_read_from_the_archive_root_the_manifest_targets(self):
-        rows = [self._row(os.path.join(self.arc2, "a.ARW"), size=5)]
         roots = [self.arc, self.arc2]
 
-        def check(free):
+        def check(rows, n, free):
             check_manifest(
                 rows,
-                n=2,
+                n=n,
                 archive_roots=roots,
                 library_roots=[self.lib],
                 free_bytes=lambda path: free[path],
             )
 
-        with self.assertRaises(ManifestError):
-            check({self.arc: 10**9, self.arc2: 4})
-        check({self.arc: 0, self.arc2: 5})
+        cases = (
+            (1, self.arc, {self.arc: 4, self.arc2: 10**9}, {self.arc: 5, self.arc2: 0}),
+            (2, self.arc2, {self.arc: 10**9, self.arc2: 4}, {self.arc: 0, self.arc2: 5}),
+        )
+        self.assertNotEqual(self.arc, self.arc2)
+        for n, dest_root, short, enough in cases:
+            with self.subTest(n=n):
+                self.assertNotEqual(short[self.arc], short[self.arc2])
+                self.assertNotEqual(enough[self.arc], enough[self.arc2])
+                rows = [self._row(os.path.join(dest_root, "a.ARW"), size=5)]
+                with self.assertRaises(ManifestError):
+                    check(rows, n, short)
+                check(rows, n, enough)
 
     def test_rule16_existing_dest_does_not_count_toward_free_space(self):
         done = os.path.join(self.arc, "done.ARW")
