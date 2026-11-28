@@ -10,6 +10,8 @@
     {"name": "undo no longer refuses an existing original", "edits": [{"file": "lrclean/mover_undo.py", "old": "return \"\" if _look(ctx, entry.original) == GONE else \"original_exists\"", "new": "return \"\""}]},
     {"name": "a twin that is the source of a row is no longer refused", "edits": [{"file": "lrclean/mover_list.py", "old": "if row.twin and paths.norm(row.twin) in sources:", "new": "if False:"}]},
     {"name": "the copy list is paired with the reject list's summary and command", "edits": [{"file": "lrclean/mover_list.py", "old": "COPIES = ListKind(\"copy-removal-list.csv\", \"copy\", \"copies-summary.md\", \"copies\")", "new": "COPIES = ListKind(\"copy-removal-list.csv\", \"copy\", \"rejects-summary.md\", \"rejects\")"}]},
-    {"name": "the listed destinations bind a row of kind reject only", "edits": [{"file": "lrclean/mover_check.py", "old": "listed = row.dests if kind in MAIN_KINDS else dests", "new": "listed = row.dests if kind == \"reject\" else dests"}]}
+    {"name": "the listed destinations bind a row of kind reject only", "edits": [{"file": "lrclean/mover_check.py", "old": "listed = row.dests if kind in MAIN_KINDS else dests", "new": "listed = row.dests if kind == \"reject\" else dests"}]},
+    {"name": "an open step with its file in staging no longer holds the row", "edits": [{"file": "lrclean/mover_purge.py", "old": "or (entry.state, look) in OPEN_IN_STAGING for entry, look in group)]", "new": "for entry, look in group)]"}]},
+    {"name": "a read error is no longer held, it stops the run", "edits": [{"file": "lrclean/mover_check.py", "old": "except _ReadFailed as exc:", "new": "except KeyError as exc:"}]}
   ]
 }

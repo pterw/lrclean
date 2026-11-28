@@ -1,0 +1,7 @@
+{
+  "tests": "tests",
+  "pattern": "test_hashing.py",
+  "mutants": [
+    {"name": "placeholder keeps its stored hash", "edits": [{"file": "lrclean/hashing.py", "old": "if placeholder or (st.st_size, st.st_mtime_ns, paths.signed64(st.st_ino)) != (", "new": "if (st.st_size, st.st_mtime_ns, paths.signed64(st.st_ino)) != ("}]}
+  ]
+}

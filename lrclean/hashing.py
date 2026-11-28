@@ -38,13 +38,12 @@ def hash_one(conn, file_row, *, want_full: bool, opener=open_binary, stat=os.sta
     path = file_row["path_orig"]
     try:
         st = stat(paths.fs_path(path))
-        if paths.is_placeholder(getattr(st, "st_file_attributes", 0)):
-            return "skipped_placeholder"
-        if (st.st_size, st.st_mtime_ns, paths.signed64(st.st_ino)) != (
+        placeholder = paths.is_placeholder(getattr(st, "st_file_attributes", 0))
+        if placeholder or (st.st_size, st.st_mtime_ns, paths.signed64(st.st_ino)) != (
                 file_row["size"], file_row["mtime_ns"], file_row["file_index"]):
             conn.execute('DELETE FROM "hash" WHERE file_id = ?', (file_row["id"],))
             conn.commit()
-            return "changed"
+            return "skipped_placeholder" if placeholder else "changed"
         old = conn.execute('SELECT * FROM "hash" WHERE file_id = ?',
                            (file_row["id"],)).fetchone()
         valid = old is not None and (old["file_index"], old["size"], old["mtime_ns"]) == (

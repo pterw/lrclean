@@ -220,12 +220,35 @@ class ConfigTests(CliCase):
 
 
 class OrderTests(CliCase):
-    def test_a_link_at_work_or_its_snapshot_folders_stops_catalogs_and_the_original_is_untouched_rule_6(self):
-        def junction(link, target):
-            made = subprocess.run(["cmd", "/c", "mklink", "/J", link, target], capture_output=True, text=True)
-            self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
-            self.addCleanup(os.rmdir, link)  # the link only, never the target
+    def junction(self, link, target):
+        made = subprocess.run(["cmd", "/c", "mklink", "/J", link, target], capture_output=True, text=True)
+        self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+        self.addCleanup(os.rmdir, link)  # the link only, never the target
 
+    def test_issue25_a_linked_work_stops_stage_undo_and_purge_before_the_database_opens_rule_38(self):
+        # catalogs on the same layout proves the layout can show a database and that catalogs opens it first
+        for argv, opens in ((("stage", "absent.csv", "--approved-sha256", "0" * 64), False),
+                            (("purge", BATCH), False), (("undo", BATCH), False), (("catalogs",), True)):
+            with self.subTest(argv[0]):
+                self.setUp()  # a fresh synthetic tree for each command
+                if argv[0] == "stage":
+                    argv = (argv[0], os.path.join(self.top, argv[1]), *argv[2:])
+                work = os.path.join(self.base, "work")
+                shutil.move(os.path.join(work, "config.json"), os.path.join(self.cats, "config.json"))
+                shutil.rmtree(work)
+                self.junction(work, self.cats)
+                names = sorted(os.listdir(self.cats))
+                self.assertNotIn("lrclean.sqlite", names)
+                code, err = self.run_cli(*argv)
+                self.assertEqual(code, 2)
+                self.assertIn(work, err)
+                if opens:
+                    self.assertIn("lrclean.sqlite", os.listdir(self.cats))
+                else:
+                    self.assertIn("is a link", err)
+                    self.assertEqual(sorted(os.listdir(self.cats)), names)
+
+    def test_a_link_at_work_or_its_snapshot_folders_stops_catalogs_and_the_original_is_untouched_rule_6(self):
         def original_files():
             out = {}
             for suffix in ("", "-wal", "-shm"):
@@ -252,7 +275,7 @@ class OrderTests(CliCase):
                 else:
                     os.makedirs(os.path.join(work, *linked[:-1]), exist_ok=True)
                 link = os.path.join(work, *linked)
-                junction(link, self.cats)
+                self.junction(link, self.cats)
                 before, names = original_files(), sorted(os.listdir(self.cats))
                 held = sorted(os.listdir(os.path.join(work, "catalogs"))) if listing_checked else None
                 code, err = self.run_cli("catalogs")
@@ -268,6 +291,15 @@ class OrderTests(CliCase):
         self.assertEqual(code, 3)
         self.assertFalse(os.path.exists(os.path.join(self.base, "work", "catalogs")))
         self.assertEqual(self.rows("SELECT COUNT(*) FROM scan"), [(0,)])
+
+    def test_catalog_scan_reraises_an_unrelated_runtime_error(self):
+        failure = RuntimeError("boom")
+        for call, side_effect in (("first", [failure]), ("second", [["explorer.exe"], failure])):
+            with self.subTest(call=call):
+                processes = mock.Mock(side_effect=side_effect)
+                with self.assertRaises(RuntimeError) as caught:
+                    self.run_cli("catalogs", processes=processes)
+                self.assertIs(caught.exception, failure)
 
     def test_steps_out_of_order_exit_with_a_message(self):
         cases = ((("inventory",), "run catalogs first"), (("hash",), "run inventory first"),
@@ -928,6 +960,20 @@ class BackupPlanTests(CliCase):
     def listing(self, root):
         return sorted((d, tuple(sorted(f))) for d, _, f in os.walk(root))
 
+    def test_issue25_a_missing_archive_drive_is_refused_before_the_database_opens(self):
+        missing = "Q:\\arch2"
+        self.assertNotEqual(os.path.splitdrive(os.path.abspath(self.arch1))[0] + "\\", "Q:\\")
+        self.volumes = {self.arch1: "x:", missing: "y:"}
+        self.write_config({**self.config, "archive_roots": [self.arch1, missing]})
+        db = os.path.join(self.base, "work", "lrclean.sqlite")
+        self.assertFalse(os.path.exists(db))
+        code, err = self.plan(exists=lambda p: p != "Q:\\")
+        self.assertEqual(code, 2)
+        self.assertIn("not connected", err)
+        self.assertIn("Q:", err)
+        self.assertFalse(os.path.exists(db))
+        self.assertFalse(os.path.exists(self.out_dir()))
+
     def test_config_without_archive_roots_still_runs_phase_a(self):
         self.write_config(self.config)
         self.assertEqual(self.run_cli("catalogs")[0], 0)
@@ -1155,6 +1201,35 @@ class BackupRunTests(BackupCase):
         self.assertFalse(os.path.exists(self.sqlite))
         self.assertEqual(len(self.stdout.splitlines()), 2)
         self.assertIn(" copy ", self.stdout)
+
+    def test_a_manifest_for_the_second_archive_root_reads_its_space_and_writes_its_journal(self):
+        self.write_manifest(["IMG_0001.ARW", "IMG_0002.ARW"], dest_root=self.arch2)
+        synth.make_tree(self.arch2, {"shoot-a/IMG_0001.ARW": b"a" * 100})
+        dest_exists = os.path.join(self.arch2, "shoot-a", "IMG_0001.ARW")
+        dest_to_copy = os.path.join(self.arch2, "shoot-a", "IMG_0002.ARW")
+        self.assertNotEqual(self.arch1, self.arch2)
+        self.assertNotEqual(dest_exists, dest_to_copy)
+        space = {self.arch1: 0, self.arch2: 1000}
+        self.assertLess(space[self.arch1], 100)
+        self.assertGreater(space[self.arch2], 100)
+        reads = []
+
+        def free_bytes(root):
+            reads.append(root)
+            return space[root]
+
+        code, err = self.go("backup-run", self.manifest, free_bytes=free_bytes)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.stdout.splitlines(), [f"0 dest_exists {dest_exists}", f"1 copy {dest_to_copy}"])
+        self.assertEqual(reads, [self.arch2])
+
+        code, err = self.go("backup-run", self.manifest, "--apply", free_bytes=free_bytes)
+        self.assertEqual((code, err), (0, ""))
+        names = os.listdir(self.journal_dir)
+        self.assertEqual(len(names), 1, names)
+        self.assertTrue(names[0].startswith("backup-2-"), names[0])
+        self.assertTrue(os.path.isfile(os.path.join(self.journal_dir, names[0])), names[0])
+        self.assertEqual(set(reads), {self.arch2})
 
     def test_apply_copies_a_clean_tree_with_exit_zero_and_a_tally(self):
         code, err = self.go("backup-run", self.manifest, "--apply")
@@ -1607,6 +1682,47 @@ class RejectsRunTests(RejectsCase):
         self.assertEqual(self.verdicts(), ["on_list"])
         self.assertEqual([r["bytes"] for r in self.table("reject-removal-list.csv")], ["100"])
         self.assertIn("1 rejects", self.stdout)
+
+    def test_a_sidecar_named_after_the_whole_photo_name_travels_from_the_files_scan(self):
+        self.steps()
+        self.assertEqual(self.run_cli("inventory")[0], 0)
+        self.assertEqual(self.go()[0], 0)
+        self.assertEqual(self.verdicts(), ["on_list"])
+        side, data = os.path.join(self.lib, "shoot-a", "IMG_0001.ARW.xmp"), b"s" * 7
+        acr, acr_data = os.path.join(self.lib, "shoot-a", "IMG_0001.ARW.acr"), b"a" * 3
+        self.assertNotIn(len(acr_data), (len(data), 100))
+        synth.make_tree(self.lib, {"shoot-a/IMG_0001.ARW.xmp": data, "shoot-a/IMG_0001.ARW.acr": acr_data})
+        self.assertEqual(self.run_cli("inventory")[0], 0)
+        con = sqlite3.connect(os.path.join(self.base, "work", "lrclean.sqlite"))
+        try:
+            spelled = {r[1]: r[0] for r in con.execute("SELECT path_orig, ext FROM file WHERE ext IN ('xmp', 'acr')")}
+        finally:
+            con.close()
+        self.assertEqual(sorted(spelled), ["acr", "xmp"])
+        spelled_acr, spelled = spelled["acr"], spelled["xmp"]
+        self.assertEqual(self.go()[0], 0)
+        row = self.table("rejects.csv")[0]
+        self.assertEqual(row["verdict"], "outside_backup")
+        self.assertEqual(row["how_decided"].partition("; held by: ")[2], spelled_acr)  # first in path order
+        raw = os.path.join(self.lib, "shoot-a", "IMG_0001.ARW")
+        st_raw, st_side, st_acr = os.stat(raw), os.stat(side), os.stat(acr)
+        for n, arch in enumerate(self.arch, start=1):
+            dests = [os.path.join(arch, "shoot-a", name)
+                     for name in ("IMG_0001.ARW", "IMG_0001.ARW.xmp", "IMG_0001.ARW.acr")]
+            synth.make_tree(arch, {"shoot-a/IMG_0001.ARW.xmp": data, "shoot-a/IMG_0001.ARW.acr": acr_data})
+            backup_plan.write_manifest(os.path.join(self.out_dir(), f"backup-manifest-{n}.csv"), [
+                backup_plan.Row(raw, dests[0], 100, st_raw.st_mtime_ns, "copy", ""),
+                backup_plan.Row(side, dests[1], 7, st_side.st_mtime_ns, "copy", ""),
+                backup_plan.Row(acr, dests[2], 3, st_acr.st_mtime_ns, "copy", "")])
+            backup_verify.write_verified(os.path.join(self.out_dir(), f"backup-verified-{n}.csv"), [
+                backup_verify.Verified(raw, dests[0], 100, "0" * 64, "identical"),
+                backup_verify.Verified(side, dests[1], 7, "1" * 64, "identical"),
+                backup_verify.Verified(acr, dests[2], 3, "2" * 64, "identical")])
+        self.assertEqual(self.run_cli("inventory")[0], 0)
+        self.assertEqual(self.go()[0], 0)
+        self.assertEqual(self.verdicts(), ["on_list"])
+        listed = self.table("reject-removal-list.csv")
+        self.assertEqual([(r["sidecars"], r["sidecar_bytes"]) for r in listed], [(f"{spelled_acr};{spelled}", "10")])
 
     def test_no_reject_writes_headers_only(self):
         self.catalog_of(self.live, [(1, 0), (2, 0)])
@@ -2107,8 +2223,36 @@ class MoverCase(unittest.TestCase):
 
         def finish():
             release.set()
-            workers[0].join(20)
+            for worker in workers:
+                worker.join(20)
         return mock.patch.multiple(self.w, stat=stat, clock=lambda: now[0]), finish
+
+    def ended_by_a_stall(self, argv, target):
+        patch, finish = self.stall_on(target)
+        journal = self.journal()
+        ended = []
+
+        class Ended(BaseException):
+            pass
+
+        def end(code):
+            ended.append((code, sys.stderr.getvalue(), sys.stdout.getvalue(), os.path.exists(journal)))
+            raise Ended
+
+        def exists(path):
+            if os.path.exists(journal):
+                with open(journal, encoding="utf-8") as handle:
+                    self.assertFalse(any(json.loads(line)["event"] == "stalled" for line in handle),
+                                     "the CLI looked up a path after the stall")
+            return self.w.exists(path)
+
+        try:
+            with patch:
+                with self.keywords(abort=end, exists=exists), self.assertRaises(Ended):
+                    self.w.main(*argv)
+        finally:
+            finish()
+        return ended[0]
 
 
 class StageCommandTests(MoverCase):
@@ -2126,13 +2270,32 @@ class StageCommandTests(MoverCase):
         self.assertEqual([row["state"] for row in self.csv_rows(f"stage-{BATCH}.csv")], ["staged"] * 3)
 
     def test_rule44_a_held_row_is_exit_6_and_named_and_the_other_row_is_staged(self):
-        os.utime(self.first[3][0], ns=(MTIME, MTIME))  # its sidecar changed since the list
-        code, out, _err = self.stage()
-        self.assertEqual(code, 6)
-        self.assertIn(f"held {self.first[0]} changed", out)
-        self.assertIn(f"    {self.first[3][0]}", out)  # the held row names the file it is held on
-        self.assertTrue(os.path.exists(self.first[0]) and os.path.exists(self.staged(self.second[0])))
-        self.assertEqual([row["state"] for row in self.csv_rows(f"stage-{BATCH}.csv")], ["staged", "held"])
+        def sidecar_changed():  # its sidecar changed since the list
+            os.utime(self.first[3][0], ns=(MTIME, MTIME))
+            return contextlib.nullcontext(), "changed", self.first[3][0]
+
+        def copy_unreadable():  # its first archive copy cannot be opened
+            copy, real = self.first[5][0], self.w.opener
+
+            def opener(path):
+                if os.path.normcase(path) == os.path.normcase(copy):
+                    raise PermissionError(path)
+                return real(path)
+            return mock.patch.object(self.w, "opener", opener), "read_error", copy
+
+        for cause in (sidecar_changed, copy_unreadable):
+            with self.subTest(cause.__name__):
+                self.setUp()  # a fresh synthetic tree for each cause
+                patch, reason, named = cause()
+                self.assertNotEqual(os.path.normcase(named), os.path.normcase(self.first[0]))
+                with patch:
+                    code, out, _err = self.stage()
+                self.assertEqual(code, 6)
+                self.assertIn(f"held {self.first[0]} {reason}", out)
+                self.assertIn(f"    {named}", out)  # the held row names the file it is held on
+                self.assertIn(f"{reason}: {cli._REASONS[reason]}", out)
+                self.assertTrue(os.path.exists(self.first[0]) and os.path.exists(self.staged(self.second[0])))
+                self.assertEqual([row["state"] for row in self.csv_rows(f"stage-{BATCH}.csv")], ["staged", "held"])
 
     def test_rule44_a_list_of_no_row_is_exit_0(self):
         _path, sha = self.removal_list([])
@@ -2148,6 +2311,24 @@ class StageCommandTests(MoverCase):
         finish()
         self.assertEqual((code, self.w.aborted, self.w.listing()), (5, [5], before))
         self.assertFalse(os.path.exists(os.path.join(self.out, f"stage-{BATCH}.csv")))
+
+    def test_rule43_stage_names_the_batch_and_any_journal_on_stderr_before_abort(self):
+        stderr = []
+        for apply in (True, False):
+            with self.subTest(apply=apply):
+                self.setUp()
+                argv = ["stage", self.list_path, "--approved-sha256", self.sha, "--stall-seconds", "10"]
+                if apply:
+                    argv.append("--apply")
+                code, err, out, journal_exists = self.ended_by_a_stall(argv, self.first[0])
+                stderr.append(err)
+                batch, journal = f"batch {BATCH}", f"journal {self.journal()}"
+                self.assertEqual(code, 5)
+                self.assertEqual(journal_exists, apply)
+                self.assertEqual(err, f"{batch}\n{journal}\n" if apply else f"{batch}\n")
+                self.assertNotIn(batch, out)
+                self.assertNotIn(journal, out)
+        self.assertEqual(len(set(stderr)), 2)
 
     def test_rule42_a_dry_run_changes_nothing_and_prints_the_sha_and_what_apply_would_do(self):
         before = self.tree()
@@ -2490,17 +2671,52 @@ class UndoPurgeCommandTests(MoverCase):
         code, out, _err = self.w.main("undo", BATCH, "--apply")
         self.assertEqual((code, self.rows_in(out, "restored")), (0, 2))
 
-    def test_rule41_nothing_to_purge_with_an_open_stage_step_is_told_by_where_the_file_is(self):
+    def test_rule41_purge_holds_an_open_stage_or_restore_step_with_its_file_in_staging(self):
         self.assertEqual(self.w.main("undo", BATCH, "--apply")[0], 0)
+        restored = self.journal_lines()
         self.append_begin_of_second("stage")  # a stage step with no `end`; its file is at the original
         code, out, _err = self.w.main("purge", BATCH)
         self.assertEqual(code, 0)  # never carried out: nothing to purge and nothing to undo
         self.assertRegex(out, r"(?is)nothing to purge.*never carried out.*original path")
         self.assertNotRegex(out, r"(?i)\bundo\b.*places")
-        os.replace(self.second[0], self.staged(self.second[0]))  # now the rename did run: undo must place it
+
+        source = self.second[0]
+        staged = self.staged(source)
+        advice = "an open stage or restore step remains in staging; undo places it"
+        for op in ("stage", "restore"):
+            with self.subTest(op=op):
+                os.replace(source, staged)
+                code, out, err = self.w.main("purge", BATCH)
+                self.assertEqual(code, 6)
+                self.assertIn(f"held {source} family_incomplete", out)
+                self.assertEqual(out.splitlines().count(advice), 1)
+                self.assertLess(out.index(f"held {source}"), out.index(advice))
+                self.assertIn("1 row(s) held", err)
+                self.assertIn("files that --apply would delete:\ntotal 0 bytes would be freed", out)
+                self.assertIn(hashlib.sha256(b"").hexdigest(), out)
+            if op == "stage":
+                self.write_journal(restored)
+                os.replace(staged, source)
+                self.append_begin_of_second("restore")
+
+        results_name = f"purge-{BATCH}.csv"
+        code, out, err = self.w.main("purge", BATCH, "--apply", "--approved-sha256", self.purge_sha())
+        self.assertEqual(code, 6)
+        self.assertIn("1 row(s) held", err)
+        self.assertTrue(os.path.exists(staged))
+        self.assertFalse(os.path.exists(source))
+        row, = self.csv_rows(results_name)
+        self.assertEqual((row["source"], row["state"], row["reason"]), (source, "held", "family_incomplete"))
+        self.assertIn(f"batch {BATCH}", out)
+        self.assertIn(f"journal {self.journal()}", out)
+        self.assertIn(f"results {os.path.join(self.out, results_name)}", out)
+
+        self.assertEqual(self.w.main("undo", BATCH, "--apply")[0], 0)
+        self.assertTrue(os.path.exists(source))
+        self.assertFalse(os.path.exists(staged))
         code, out, _err = self.w.main("purge", BATCH)
         self.assertEqual(code, 0)
-        self.assertRegex(out, r"(?is)nothing to purge.*open stage step.*\bundo\b.*places")
+        self.assertIn(f"no file of batch {BATCH} is staged any more", out)
 
     def test_rule40_undo_of_a_stage_step_that_never_ran_skips_the_row_and_says_why(self):
         self.assertEqual(self.w.main("undo", BATCH, "--apply")[0], 0)
@@ -2579,13 +2795,24 @@ class UndoPurgeCommandTests(MoverCase):
         target = self.staged(self.first[0])
         patch, finish = self.stall_on(target)
         with patch:
-            code, out, _err = self.w.main("purge", BATCH, "--apply", "--approved-sha256", sha,
-                                          "--stall-seconds", "10")
+            code, out, err = self.w.main("purge", BATCH, "--apply", "--approved-sha256", sha,
+                                         "--stall-seconds", "10")
         finish()
         self.assertEqual((code, self.w.aborted, os.path.exists(target)), (5, [5], True))
-        self.assertIn(f"batch {BATCH}", out)  # the stalled run names the batch and the journal it left
-        self.assertIn(self.journal(), out)
+        for line in (f"batch {BATCH}", f"journal {self.journal()}"):
+            self.assertIn(line, err)
+            self.assertNotIn(line, out)
         self.assertFalse(os.path.exists(os.path.join(self.out, f"purge-{BATCH}.csv")))
+
+    def test_rule43_purge_names_the_batch_and_journal_on_stderr_before_abort(self):
+        argv = ["purge", BATCH, "--apply", "--approved-sha256", self.purge_sha(), "--stall-seconds", "10"]
+        code, err, out, journal_exists = self.ended_by_a_stall(argv, self.staged(self.first[0]))
+        batch, journal = f"batch {BATCH}", f"journal {self.journal()}"
+        self.assertEqual(code, 5)
+        self.assertTrue(journal_exists)
+        self.assertEqual(err, f"{batch}\n{journal}\n")
+        self.assertNotIn(batch, out)
+        self.assertNotIn(journal, out)
 
     def test_rule44_a_bad_batch_a_missing_journal_and_a_journal_without_a_start_line_are_exit_2(self):
         other = "20260102T000000Z"
@@ -2915,36 +3142,37 @@ class ExitCodeTests(RejectsCase):
         backup_plan.write_manifest(stranded, [backup_plan.Row(
             source, os.path.join(gone, "shoot-a", "IMG_0001.ARW"), 100, os.stat(source).st_mtime_ns, "copy", "")])
         cases = (
-            ("backup-plan on a missing drive", ("backup-plan",), 2, gone, {"archive_roots": [gone]}, None, {}),
-            ("backup-plan, only the second root on a missing drive", ("backup-plan",), 2, gone,
+            ("backup-plan on a missing drive", ("backup-plan",), 2, gone, None, {"archive_roots": [gone]}, None, {}),
+            ("backup-plan, only the second root on a missing drive", ("backup-plan",), 2, gone, None,
              {"archive_roots": [self.arch[0], gone]}, None, {}),
-            ("backup-run on a missing drive", ("backup-run", stranded), 2, gone,
+            ("backup-run on a missing drive", ("backup-run", stranded), 2, gone, None,
              {"archive_roots": [gone]}, None, {"free_bytes": no_free_space_read}),
-            ("backup-run, the manifest's own second drive is missing", ("backup-run", stranded), 2, gone,
+            ("backup-run, the manifest's own second drive is missing", ("backup-run", stranded), 2, gone, None,
              {"archive_roots": [self.arch[0], gone]}, None, {"free_bytes": no_free_space_read}),
-            ("backup-run --apply on a missing drive", ("backup-run", stranded, "--apply"), 2, gone,
+            ("backup-run --apply on a missing drive", ("backup-run", stranded, "--apply"), 2, gone, None,
              {"archive_roots": [gone]}, None, {"free_bytes": no_free_space_read}),
-            ("backup-run while the other drive is missing", ("backup-run", manifest), 0,
+            ("backup-run while the other drive is missing", ("backup-run", manifest), 0, None,
              f"0 dest_exists {dest}", {"archive_roots": [self.arch[0], gone]}, None,
              {"free_bytes": {self.arch[0]: 1000}.__getitem__}),
             ("backup-run --apply, journal folder is a file", ("backup-run", manifest, "--apply"), 6,
-             "journal", {}, ("work/journal", False), {}),
+             "journal", None, {}, ("work/journal", False), {}),
             ("backup-verify, list is a folder", ("backup-verify", manifest), 6,
-             "backup-verified-1.csv", {}, ("out/backup-verified-1.csv", True), {}),
-            ("rejects, output is a folder", ("rejects",), 6, "rejects.csv.tmp", {},
+             "backup-verified-1.csv", None, {}, ("out/backup-verified-1.csv", True), {}),
+            ("rejects, output is a folder", ("rejects",), 6, "rejects.csv.tmp", None, {},
              ("out/rejects.csv.tmp", True), {}),
-            ("catalogs, tasklist fails", ("catalogs",), 3, "cannot list processes", {}, None,
+            ("catalogs, tasklist fails", ("catalogs",), 3, "cannot list processes", None, {}, None,
              {"processes": catalogs.running_processes, "error": subprocess.CalledProcessError(1, "tasklist")}),
-            ("catalogs, tasklist times out", ("catalogs",), 3, "cannot list processes", {}, None,
+            ("catalogs, tasklist times out", ("catalogs",), 3, "cannot list processes", None, {}, None,
              {"processes": catalogs.running_processes, "error": subprocess.TimeoutExpired("tasklist", 30)}),
-            ("catalogs, tasklist fails before snapshot", ("catalogs",), 3, "cannot list processes", {}, None,
-             {"processes": mock.Mock(side_effect=[["explorer.exe"], RuntimeError("cannot list processes")])}),
-            ("catalogs, work database is not a database", ("catalogs",), 6, database, {},
+            ("catalogs, tasklist fails before snapshot", ("catalogs",), 3, "cannot list processes", None, {}, None,
+             {"processes": mock.Mock(side_effect=[
+                 ["explorer.exe"], catalogs.ProcessListUnreadable("cannot list processes")])}),
+            ("catalogs, work database is not a database", ("catalogs",), 6, database, None, {},
              ("work/lrclean.sqlite", False), {}),
-            ("catalogs, work database is a folder", ("catalogs",), 6, database, {},
+            ("catalogs, work database is a folder", ("catalogs",), 6, database, None, {},
              ("work/lrclean.sqlite", True), {}),
         )
-        for name, argv, code, named, config, occupied, extra in cases:
+        for name, argv, code, in_err, out_line, config, occupied, extra in cases:
             with self.subTest(name):
                 self.write_config({**self.config, **config})
                 self.steps()
@@ -2962,9 +3190,10 @@ class ExitCodeTests(RejectsCase):
                 self.assertEqual(got, code, err)
                 if code == 0:
                     self.assertEqual(err, "")
-                    self.assertEqual(self.stdout.splitlines(), [named])
-                else:
-                    self.assertIn(named, err)
+                if out_line is not None:
+                    self.assertEqual(self.stdout.splitlines(), [out_line])
+                if in_err is not None:
+                    self.assertIn(in_err, err)
                 self.assertNotIn("Traceback", err)
                 self.assertEqual(self.listings(), before)
 

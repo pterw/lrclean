@@ -14,6 +14,23 @@ import synth
 from lrclean import catalog_views, catalogs, paths, report, store
 
 NONE_RUNNING = lambda: []  # noqa: E731
+ASTRAL = "\U0001F4F7\U0001F4F8\U0001F4F9" * 41 + ".lrcat"  # 252 UTF-16 units, 129 characters
+
+
+def name_of(units):
+    """A catalog file name of exactly `units` UTF-16 units; its stem cycles a to z, so its two ends differ."""
+    return "".join(chr(ord("a") + i % 26) for i in range(units - len(".lrcat"))) + ".lrcat"
+
+
+def invalid_for(suffix, source, size=7, mtime_ns=11):
+    """A stat answering `source` itself, failing `suffix` with an invalid-name error, the rest not found."""
+    def stat(path):
+        if path == paths.fs_path(source):
+            return SimpleNamespace(st_size=size, st_mtime_ns=mtime_ns, st_file_attributes=0)
+        if path.endswith(suffix):
+            raise OSError(22, "invalid name")
+        raise FileNotFoundError(path)
+    return stat
 
 
 def listing(folder):
@@ -260,6 +277,16 @@ class TestSnapshot(Tmp):
         self.assertEqual(os.listdir(denied_work), [])
         self.assertEqual([tuple(r) for r in conn.execute("SELECT status, snapshot_path FROM catalog")],
                          [("unreadable", "")])
+        source = os.path.join(self.tmp, "shoot-b", name_of(249))
+        for suffix in ("-wal", "-shm"):
+            with self.subTest(fitting=suffix):
+                self.assertLessEqual(paths.name_units(name_of(249) + suffix), paths.NAME_LIMIT)
+                with mock.patch("shutil.copyfile") as copy:
+                    with self.assertRaises(ValueError) as caught:
+                        catalogs.snapshot_catalog(source, self.work, NONE_RUNNING, stat=invalid_for(suffix, source))
+                copy.assert_not_called()
+                self.assertIn(source + suffix, str(caught.exception))
+        self.assertFalse(os.path.exists(os.path.join(self.work, "catalogs")))
 
     def make_pair(self):
         """Two catalogs of different names and sizes; returns the sources of shoot-a and shoot-b."""
@@ -318,6 +345,72 @@ class TestSnapshot(Tmp):
         self.assertEqual(rows["shoot-b"], ("ok", ""))
         self.assertEqual(conn.execute("SELECT status FROM scan").fetchone()[0], "complete")
 
+    def long_copy(self, folder, name):
+        """A short synthetic catalog copied to `folder/name`, made and removed through paths.fs_path."""
+        seed = self.path("seed-" + folder, "seed.lrcat")
+        synth.make_catalog(seed, [{"base": "IMG_0001"}])
+        source = os.path.join(self.tmp, folder, name)
+        os.makedirs(os.path.dirname(source), exist_ok=True)
+        shutil.copyfile(seed, paths.fs_path(source))
+        self.addCleanup(shutil.rmtree, paths.fs_path(os.path.join(self.work, "catalogs")), True)
+        self.addCleanup(os.remove, paths.fs_path(source))
+        return source
+
+    def test_a_snapshot_folder_name_is_cut_to_255_units_and_stays_stable_issue_18(self):
+        cases = {248: name_of(248), 249: name_of(249), 255: name_of(255), 252: ASTRAL}
+        self.assertEqual(len(ASTRAL), 129)
+        for units, name in cases.items():
+            with self.subTest(units=units, chars=len(name)):
+                self.assertEqual(paths.name_units(name), units)
+                source = self.long_copy(f"shoot-{units}", name)
+                digest = hashlib.sha1(paths.norm(source).encode("utf-8")).hexdigest()[:12]
+                uncut = f"{os.path.splitext(name)[0]}-{digest}"
+                if units == 248:
+                    self.assertEqual(paths.name_units(uncut), paths.NAME_LIMIT)
+                else:
+                    self.assertGreater(paths.name_units(uncut), paths.NAME_LIMIT)
+                snap = catalogs.snapshot_catalog(source, self.work, NONE_RUNNING)
+                folder = os.path.basename(os.path.dirname(snap))
+                stem = os.path.splitext(name)[0]
+                keep = max(k for k in range(len(stem) + 1)
+                           if paths.name_units(f"{stem[:k]}-{digest}") <= paths.NAME_LIMIT)
+                if units != 248:
+                    self.assertNotEqual(stem[:keep], stem[len(stem) - keep:])  # a cut from the front differs
+                if units in (249, 255):
+                    self.assertEqual((len(stem) - keep) % 2, 1)  # a cut two at a time misses `keep`
+                self.assertEqual(folder, f"{stem[:keep]}-{digest}")
+                self.assertLessEqual(paths.name_units(folder), paths.NAME_LIMIT)
+                if units == 248:
+                    self.assertEqual(folder, uncut)
+                with open(paths.fs_path(snap), "rb") as copy, open(paths.fs_path(source), "rb") as original:
+                    self.assertEqual(copy.read(), original.read())
+                self.assertEqual(catalogs.snapshot_catalog(source, self.work, NONE_RUNNING), snap)
+
+    def test_a_catalog_name_of_247_units_is_read_and_248_to_255_are_unreadable_with_sqlite_reason_issue_18(self):
+        sources = {u: self.long_copy(f"shoot-{u}", name_of(u)) for u in (247, 248, 252, 255)}
+        unread = tuple(name_of(u) for u in (248, 252, 255))
+        self.assertGreater(paths.name_units(name_of(252) + "-wal"), paths.NAME_LIMIT)
+        conn = self.conn()
+        real_connect = sqlite3.connect
+
+        def connect(path, *args, **kwargs):
+            if str(path).endswith(unread):
+                raise sqlite3.OperationalError("disk I/O error")
+            return real_connect(path, *args, **kwargs)
+
+        with mock.patch("sqlite3.connect", connect):
+            self.scan(conn, [os.path.dirname(s) for s in sources.values()])
+        rows = {paths.name_units(os.path.basename(r["source_path"])): r for r in conn.execute("SELECT * FROM catalog")}
+        self.assertEqual(rows[247]["status"], "ok")
+        self.assertGreater(conn.execute("SELECT COUNT(*) FROM record WHERE catalog_id = ?",
+                                        (rows[247]["id"],)).fetchone()[0], 0)
+        for units in (248, 252, 255):
+            with self.subTest(units=units):
+                self.assertEqual((rows[units]["status"], rows[units]["has_lock"]), ("unreadable", 0))
+                self.assertNotEqual(rows[units]["snapshot_path"], "")
+                self.assertTrue(rows[units]["reason"].startswith("SQLite cannot read the copy of the catalog: "))
+                self.assertNotIn("the attributes of", rows[units]["reason"])
+
     def test_lightroom_listed_refuses_before_copy_rule_6(self):
         source = self.path("a", "main.lrcat")
         synth.make_catalog(source, [])
@@ -373,6 +466,13 @@ class TestSnapshot(Tmp):
             return os.stat(path)
 
         self.assertTrue(catalogs.is_stale(source, *args, 0, 0, stat=denied_lock), "lock cannot be read")
+        for suffix, units, stale in (("-wal", 251, True), ("-wal", 252, False),
+                                     (".lock", 250, True), (".lock", 251, False)):
+            with self.subTest(suffix=suffix, units=units):
+                name = name_of(units)
+                self.assertEqual(paths.name_units(name + suffix), 255 if stale else 256)
+                long = os.path.join(self.tmp, "b", name)
+                self.assertEqual(catalogs.is_stale(long, 7, 11, 0, 0, stat=invalid_for(suffix, long)), stale)
 
     def test_wal_and_lock_are_read_before_the_copy_rule_6(self):
         source = self.path("a", "main.lrcat")
@@ -582,8 +682,10 @@ class TestRunningProcesses(unittest.TestCase):
                 else:
                     patch = mock.patch("lrclean.catalogs.subprocess.run", return_value=failure)
                 with patch:
-                    with self.assertRaises(RuntimeError):
+                    with self.assertRaises(catalogs.ProcessListUnreadable) as caught:
                         catalogs.running_processes()
+                self.assertIn("cannot list processes", str(caught.exception))
+                self.assertNotIn("is running", str(caught.exception))
 
     def test_a_failing_tasklist_is_not_read_as_nothing_running_rule_6(self):
         def fake(*args, **kw):
@@ -591,8 +693,10 @@ class TestRunningProcesses(unittest.TestCase):
                 raise subprocess.CalledProcessError(1, "tasklist")
             return subprocess.CompletedProcess([], 1, stdout='"x.exe","1"\n')
         with mock.patch("lrclean.catalogs.subprocess.run", side_effect=fake):
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(catalogs.ProcessListUnreadable) as caught:
                 catalogs.running_processes()
+        self.assertIn("cannot list processes", str(caught.exception))
+        self.assertNotIn("is running", str(caught.exception))
 
 
 class TestFind(Tmp):
@@ -690,11 +794,31 @@ class TestRootStates(Tmp):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM catalog").fetchone()[0], 1)
 
     def test_lightroom_running_leaves_scan_partial_and_reraises_rule_5(self):
-        synth.make_catalog(self.path("r", "a", "one.lrcat"), [])
-        conn = self.conn()
-        with self.assertRaises(catalogs.LightroomRunning):
-            self.scan(conn, [os.path.join(self.tmp, "r")], processes=lambda: ["lightroom.exe"])
-        self.assertEqual(conn.execute("SELECT status FROM scan").fetchone()[0], "partial")
+        source = self.path("r", "a", "one.lrcat")
+        synth.make_catalog(source, [])
+        with open(source + "-wal", "wb") as handle:
+            handle.write(b"x" * 10)
+        self.assertTrue(os.path.exists(source + "-wal"))
+        asked = []
+
+        def recording(path):
+            asked.append(path)
+            return os.stat(path)
+
+        def unreadable():
+            raise catalogs.ProcessListUnreadable("cannot list processes: x")
+
+        cases = (("running", catalogs.LightroomRunning, lambda: ["lightroom.exe"]),
+                 ("unreadable", catalogs.ProcessListUnreadable, unreadable))
+        for name, expected, processes in cases:
+            with self.subTest(cause=name), contextlib.closing(store.connect(self.path("work", f"{name}.db"))) as conn:
+                asked.clear()
+                with self.assertRaises(expected) as caught:
+                    self.scan(conn, [os.path.join(self.tmp, "r")], processes=processes, stat=recording)
+                self.assertIs(type(caught.exception), expected)
+                self.assertEqual(conn.execute("SELECT status FROM scan").fetchone()[0], "partial")
+                self.assertIn(paths.fs_path(source), asked)
+                self.assertFalse([p for p in asked if p.endswith("-wal")])
 
 
 class TestRootFolders(Tmp):

@@ -1,7 +1,8 @@
 """Backup manifest format and archive-root checks (phase B1).
 
 The only write is `write_manifest`. Paths compare through `paths.norm`, not
-the real path (known limit: a junction inside an archive root is not seen).
+the real path (a junction or link inside an archive root is resolved by
+`backup.check_manifest`, rule 17).
 """
 
 from __future__ import annotations

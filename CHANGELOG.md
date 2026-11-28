@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.1.2 - 2026-11-28
+
+The mover and the backup. A row that `stage` or `purge` cannot check is held instead of dropped or stopping the run,
+and `backup-run` refuses more manifests before anything is written.
+
+- `stage` and `purge` refuse a linked tool folder, and `backup-plan` a missing archive drive, before the work
+  database is opened, so nothing is created where a link leads; `undo` checks the link in `main` too (#25); a linked
+  `work/catalogs` that cannot be listed is named as a link (R1).
+- `backup-run`: a destination that became an online-only placeholder after it was verified is `dest_placeholder` in
+  the dry run (exit 0, as for every dry run) and with `--apply` (exit 6), no longer `already_verified` or `verified`
+  (#24).
+- Section 5 of the report no longer counts a backup copy that became an online-only placeholder as copied, and
+  `verify` no longer selects it from an old sample; its stored hash is removed when `hash` finds it (#24).
+- `verify` counts each corrupted copy as a mismatch, also when another copy of the file is exact, and section 5 of
+  `summary.md` totals the library's raws and the backup-only raws apart (#28).
+- `purge` holds a row whose only files are still in staging under a `stage` or `restore` step that never finished
+  (`family_incomplete`, exit 6) instead of dropping it with exit 0 (#33).
+- `backup-run` refuses a manifest whose destination file name is 243 or more UTF-16 units, naming the file,
+  instead of failing that row at every copy (#18).
+- `backup-run` refuses a manifest whose destination lies below, or is itself, a junction or link inside an archive
+  root that leads into a library root or out of the archive root, instead of writing the copy there or setting the
+  time of the file the link leads to (rule 17).
+- `stage` and `purge` hold a row whose file cannot be read (`read_error`, naming the file) and go on with the next
+  row, instead of stopping the whole run (#29).
+- `stage` and `purge` print the batch and the journal on stderr when a stalled drive ends the run (exit 5), as
+  `backup-run` prints its row (#30).
+- Catalog file names near the 255 limit (counted in UTF-16 units, #18): the snapshot folder name always fits,
+  `stage` and `purge` no longer refuse (exit 3) for a `.lock` that cannot exist, and the reason shown for such a
+  catalog is now SQLite's own. A catalog whose file name has 248 to 255 units is still not read on Windows with
+  SQLite 3.49 (it cannot open the copy), and, being `unreadable`, it limits coverage. `catalogs` checks that
+  Lightroom is not running before it reads a `-wal` file.
+- `backup-run`: a destination that already holds the same content but another modification time gets the
+  source's time; if that cannot be set, or the destination has other hard links, the row stays `already_there` and
+  one line names the file (#12).
+- A sidecar named after the whole photo name (`IMG_0001.ARW.xmp`) is matched to its photo: `rejects` lists it with its
+  photo and `copies` holds a copy that has one (#11). It still belongs to a photo whose own name ends that way
+  (`IMG_0001.ARW.ARW`) too, and it stays when either photo is kept.
+- `catalogs` ends with exit 3 only for Lightroom running or an unreadable process list; any other `RuntimeError` in a
+  catalog scan is no longer reported as "Lightroom running" (R4).
+- Internal: `backup-run` reads the archive number once, and the exit-code test table has one column for each meaning
+  (R3). No behaviour changes.
+
 ## 0.1.1 - 2026-11-27
 
 Messages, refusals and exit codes. No verdict about which file may leave the drive changes.

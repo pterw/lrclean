@@ -14,6 +14,7 @@ from lrclean.mover_journal import Entry, Journal, JournalError, entries, read_jo
 from lrclean.mover_purge import look_all, purge_set, purge_sha256, run_purge
 from lrclean.mover_undo import RowResult
 from mover_world import BATCH, World
+from test_mover_check import FailingRead
 
 MTIME = 1_700_000_000_000_000_000
 WAIT = 10
@@ -206,6 +207,24 @@ class PurgeRowsTests(unittest.TestCase):
         def twin(e):
             return e.twin
 
+        def unreadable(path_of):
+            def edit(fx, e):
+                def on_open(path):
+                    if os.path.normcase(path) == os.path.normcase(path_of(e)):
+                        raise PermissionError(path)
+                fx.on_open = on_open
+            return edit
+
+        def read_fails(path_of):  # the open succeeds, a later read() fails
+            def edit(fx, e):
+                real = fx.ctx.seams.opener
+
+                def opener(path):
+                    handle = real(path)
+                    return FailingRead(handle) if os.path.normcase(path) == os.path.normcase(path_of(e)) else handle
+                fx.use(opener=opener)
+            return edit
+
         # (name, index of the offender in the row, reason, edit: (fixture, entry) -> None or a new entry,
         #  the file named as failing: the staged file, an archive copy or the twin, never the library original)
         cases = [
@@ -240,6 +259,11 @@ class PurgeRowsTests(unittest.TestCase):
              lambda fx, e: fx.world.attrs.update({paths.norm(e.dests[1][0]): paths.PLACEHOLDER_MASK}), second_copy),
             ("the staged file that became a placeholder after staging", 2, "staged_changed",
              lambda fx, e: fx.world.attrs.update({paths.norm(e.staged): paths.PLACEHOLDER_MASK}), staged),
+            ("the staged file cannot be opened", 2, "read_error", unreadable(staged), staged),
+            ("the first archive copy cannot be opened", 2, "read_error", unreadable(first_copy), first_copy),
+            ("the second archive copy cannot be opened", 2, "read_error", unreadable(second_copy), second_copy),
+            ("the twin cannot be opened", 0, "read_error", unreadable(twin), twin),
+            ("the second archive copy fails mid-read", 2, "read_error", read_fails(second_copy), second_copy),
         ]
         never_opened = {"an archive copy that became a placeholder after staging",
                         "the staged file that became a placeholder after staging"}
@@ -424,6 +448,43 @@ class PurgeFamilyTests(unittest.TestCase):
                              [(0, "held", "unplaced", (lost.original,)), (1, "purged", "", results[1].files)])
             held, = [line for line in fx.lines() if line["event"] == "held"]
             self.assertEqual((held["reason"], held["file"], held["kind"]), ("unplaced", lost.original, "reject"))
+
+    def test_rule_41_a_row_of_open_steps_is_held_when_its_files_are_in_staging(self):
+        for state, in_staging, placement in (("open_stage", True, "done"),
+                                             ("open_stage", False, "not_done"),
+                                             ("open_restore", True, "not_done"),
+                                             ("open_restore", False, "done")):
+            for size in (1, 2):
+                with self.subTest(state=state, in_staging=in_staging, size=size), fixture() as fx:
+                    control = fx.family(1)
+                    names = [("IMG_0004.ARW", "reject"), ("IMG_0004.xmp", "sidecar")]
+                    opened = [fx.stage(f"shoot-4/{name}", 4, kind, size)._replace(state=state)
+                              for name, kind in names[:size]]
+                    for entry in opened:
+                        self.assertNotEqual(entry.row, control[0].row)
+                        self.assertNotEqual(entry.family, control[0].family)
+                        if not in_staging:
+                            os.rename(entry.staged, entry.original)
+                        self.assertEqual((os.path.exists(entry.original), os.path.exists(entry.staged)),
+                                         (not in_staging, in_staging))
+                    looked = look_all(opened + control, fx.ctx)
+                    self.assertEqual([look for _, look in looked[:size]], [placement] * size)
+                    expected = [(1, "purged", "")]
+                    if in_staging:
+                        expected.insert(0, (4, "held", "family_incomplete"))
+                    results = fx.purge_looked(looked)
+                    self.assertEqual([(r.index, r.state, r.reason) for r in results], expected)
+                    self.assertTrue(all(fx.gone(entry) for entry in control))
+                    held = [line for line in fx.lines() if line["event"] == "held"]
+                    if in_staging:
+                        reject = opened[0].original
+                        self.assertEqual(results[0], RowResult(4, reject, "held", "family_incomplete", (reject,)))
+                        self.assertEqual([(h["reason"], h["kind"], h["file"]) for h in held],
+                                         [("family_incomplete", "reject", reject)])
+                        self.assertTrue(fx.untouched(opened))
+                    else:
+                        self.assertEqual(held, [])
+                        self.assertTrue(all(os.path.exists(entry.original) for entry in opened))
 
     def test_rule_41_a_second_purge_after_a_crash_that_deleted_the_sidecars_only_finishes_the_family(self):
         # the crash is at the reject's remove (both sidecars have their `end`), or after the last sidecar's

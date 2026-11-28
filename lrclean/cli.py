@@ -169,20 +169,14 @@ def _library_scan_ids(conn, library_roots: list[str]) -> list[int]:
 
 def _catalogs(run: _Run) -> int:
     _refuse(mover_gate.link_refusal(run.base, run.seams.is_link, run.seams.listdir))
-    try:
-        names = run.processes()
-    except RuntimeError as exc:  # processes cannot be listed: refuse, as if Lightroom ran
-        raise catalogs.LightroomRunning(str(exc)) from exc
+    names = run.processes()
     if any(name.startswith("lightroom") for name in names):
         raise catalogs.LightroomRunning("Lightroom is running: refusing to copy a catalog")
-    try:
-        ids = catalogs.scan_catalogs(
-            run.conn, catalog_roots=run.cfg["catalog_roots"], own_dir=run.base,
-            exclude=_exclude(run), work_dir=os.path.join(run.base, "work"),
-            live_catalog=run.cfg["live_catalog"], old_states=run.cfg["old_states"],
-            processes=run.processes, now=run.now)
-    except RuntimeError as exc:
-        raise catalogs.LightroomRunning(str(exc)) from exc
+    ids = catalogs.scan_catalogs(
+        run.conn, catalog_roots=run.cfg["catalog_roots"], own_dir=run.base,
+        exclude=_exclude(run), work_dir=os.path.join(run.base, "work"),
+        live_catalog=run.cfg["live_catalog"], old_states=run.cfg["old_states"],
+        processes=run.processes, now=run.now)
     latest = _latest_catalogs(run.conn)
     bad = sum(1 for c in latest if c["status"] in ("unreadable", "partial"))
     print(f"catalogs stored: {len(ids)} ({bad} unreadable or partial)")
@@ -291,7 +285,7 @@ def _require_connected(run: _Run) -> list[str]:
 
 
 def _backup_plan(run: _Run) -> int:
-    roots = _require_connected(run)
+    roots = run.cfg["archive_roots"]
     try:
         plan = backup_plan.plan_manifests(
             run.conn, library_roots=run.cfg["library_roots"], photo_root=run.cfg["photo_root"],
@@ -323,8 +317,9 @@ def _backup_run(run: _Run) -> int:
     def check(rows):
         n = backup_plan.archive_index(rows, roots)
         _require_connected_drive(run, roots[n - 1])
-        return backup.check_manifest(rows, archive_roots=roots, library_roots=run.cfg["library_roots"],
-                                     free_bytes=run.free_bytes, exists=run.exists)
+        backup.check_manifest(rows, n=n, archive_roots=roots, library_roots=run.cfg["library_roots"],
+                              free_bytes=run.free_bytes, exists=run.exists)
+        return n
 
     rows, n = _manifest_rows(run, check)
     journal_dir = os.path.join(run.base, "work", "journal")
@@ -546,9 +541,13 @@ def _prologue(run: _Run) -> _Prologue:
 
 def _rejects_run(run: _Run) -> int:
     pro = _prologue(run)
+    files_sidecars = {r["path_norm"]: r["path_orig"]
+                      for r in classify.inventoried_files(run.conn, run.cfg["library_roots"])
+                      if r["ext"] in paths.SIDECAR_EXTS}
     found = rejects.decide(pro.views, pro.evidence, coverage_complete=pro.cov.complete, stat=run.stat,
                            attrs_of=run.attrs_of,
-                           hashes=reject_twin.load_hashes(run.conn, run.cfg["library_roots"]))
+                           hashes=reject_twin.load_hashes(run.conn, run.cfg["library_roots"]),
+                           files_sidecars=files_sidecars)
     reject_out.write_outputs(pro.out_dir, found, roots=len(pro.roots), summary=pro.summary)
     print(f"reject check written to {pro.out_dir}: {len(found)} rejects")
     return OK
@@ -643,7 +642,6 @@ def _refuse(refusal) -> None:
 
 
 def _mover_ctx(run: _Run, batch: str):
-    _refuse(mover_gate.link_refusal(run.base, run.seams.is_link, run.seams.listdir))
     return mover_seams.new_ctx(run.seams, mover_seams.Folders(run.base, run.cfg["photo_root"]), run.base, batch)
 
 
@@ -660,6 +658,7 @@ _REASONS = {
     "twin_mismatch": "the twin (named) differs from the file, or is not on its own volume, so the row stays",
     "no_archive_copy": "no verified archive copy at the path named: it is missing or differs from what "
                        "backup-verify recorded",
+    "read_error": "a file of the row (named) could not be read, so the row stays",
     "staged_changed": "the staged file (named) is not the one that was staged",
     "staged_missing": "the staged file is gone",
     "changed": "the file (named) changed since the list was made",
@@ -721,18 +720,21 @@ def _write_results(run: _Run, op: str, batch: str, ctx, journal) -> None:
     _finished(batch, journal, path)
 
 
-def _finished(batch: str, journal, results_path: str | None) -> None:
-    print(f"batch {batch}")
-    print(f"journal {journal.path}")
+def _finished(batch: str, journal, results_path: str | None, *, file=None) -> None:
+    print(f"batch {batch}", file=file)
+    if journal is not None:
+        print(f"journal {journal.path}", file=file)
     if results_path:
-        print(f"results {results_path}")
+        print(f"results {results_path}", file=file)
 
 
-def _stalled(run: _Run, batch: str, journal) -> int:
-    """A stalled run's exit; it names the batch and the journal it left, when it left one."""
-    if run.exists(journal.path):
-        _finished(batch, journal, None)
-    return STALLED
+def _with_stall_notice(ctx: mover_seams.Ctx, journal, apply: bool) -> mover_seams.Ctx:
+    """Name the batch and any journal before abort, using only facts already in hand."""
+    def abort(code):
+        _finished(ctx.batch, journal if apply else None, None, file=sys.stderr)
+        ctx.seams.abort(code)
+
+    return ctx._replace(seams=ctx.seams._replace(abort=abort))
 
 
 def _load_journal(run: _Run):
@@ -784,12 +786,13 @@ def _stage(run: _Run) -> int:
     start = {"list_sha256": computed, "approved_sha256": mover_list.approved_sha(args.approved_sha256),
              "scans": [["catalogs", s["id"]] for s in store.latest_scans(run.conn, "catalogs")]}
     journal = _open_journal(run, ctx, batch)
+    ctx = _with_stall_notice(ctx, journal, args.apply)
     outcome = mover_stage.run_stage(chosen, evidence=evidence, ctx=ctx, journal=journal, start=start,
                                     stall_seconds=args.stall_seconds, apply=args.apply, shared_paths=shared)
     print(f"SHA-256 of the list: {computed}")
     _show(outcome.results)
     if outcome.stalled:
-        return _stalled(run, batch, journal)
+        return STALLED
     if args.apply:
         _write_results(run, "stage", batch, ctx, journal)
     else:
@@ -831,13 +834,16 @@ def _purge(run: _Run) -> int:
     computed = mover_purge.purge_sha256(looked)
     approval = mover_gate.purge_approved(computed, args.approved_sha256) if args.apply else None
     _refusals(run, "purge", ctx, [entry.original for entry in entries], approval)
+    ctx = _with_stall_notice(ctx, journal, args.apply)
     results = mover_purge.run_purge(looked, roots=roots, ctx=ctx, journal=journal,
                                     start={"purge_sha256": computed}, stall_seconds=args.stall_seconds,
                                     apply=args.apply)
     print(f"SHA-256 of the purge set: {computed}")
     _show(results)
+    if any((entry.state, look) in mover_purge.OPEN_IN_STAGING for entry, look in looked):
+        print("an open stage or restore step remains in staging; undo places it")
     if ctx.stop.is_set():
-        return _stalled(run, args.batch, journal)
+        return STALLED
     if not results:
         _nothing_to_purge(args.batch, looked)
     if args.apply:
@@ -848,13 +854,10 @@ def _purge(run: _Run) -> int:
 
 
 def _nothing_to_purge(batch: str, looked: list) -> None:
-    open_stage = [look for entry, look in looked if entry.state == "open_stage"]  # a stage step with no `end`
-    if open_stage and all(look == "not_done" for look in open_stage):
+    # an open stage step (no `end`) that is done or unplaced is a result, so here it was never carried out
+    if any(entry.state == "open_stage" for entry, _ in looked):
         print(f"nothing to purge: the stage step of batch {batch} was never carried out; the file is at its "
               "original path (nothing to purge, nothing to undo)")
-    elif open_stage:
-        print(f"nothing to purge: no file of batch {batch} is staged, but an open stage step remains;"
-              " undo places it")
     else:
         print(f"nothing to purge: no file of batch {batch} is staged any more")
 
@@ -967,12 +970,17 @@ def main(argv: list[str] | None = None, *, processes=catalogs.running_processes,
     db_path = os.path.join(base, "work", "lrclean.sqlite")
     conn = None
     try:
-        if args.command not in _NO_DATABASE:
-            conn = store.connect(db_path)
-        run = _Run(args, cfg, conn, base, processes, now, stat, attrs_of, exists, volume_of, free_bytes,
+        run = _Run(args, cfg, None, base, processes, now, stat, attrs_of, exists, volume_of, free_bytes,
                    clock, opener, writer, rename, abort, scandir,
                    mover_seams.Seams(stat, attrs_of, is_link, opener, rename, remove, rmdir, makedirs, listdir,
                                      append, write, clock, abort, now), [])
+        if args.command in ("stage", "undo", "purge"):
+            _refuse(mover_gate.link_refusal(base, is_link, listdir))
+        if args.command == "backup-plan":
+            _require_connected(run)
+        if args.command not in _NO_DATABASE:
+            conn = store.connect(db_path)
+            run = run._replace(conn=conn)
         return _COMMANDS[args.command](run)
     except sqlite3.DatabaseError as exc:
         return _fail(HELD, f"{args.command} stopped on a database error at {db_path} ({exc})")

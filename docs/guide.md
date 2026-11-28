@@ -98,7 +98,7 @@ for that long ends the run with exit 5.
 | 2 | Configuration, list, journal or approval refused; nothing was changed |
 | 3 | Lightroom is running, the list of processes cannot be read, or a lock file lies beside a catalog that is read |
 | 4 | Evidence is stale or incomplete: the message says what to run again (`catalogs`, `inventory`, `rejects`, `copies`) |
-| 5 | A drive stalled; the journal says where the run stopped |
+| 5 | A drive stalled; `stage` and `purge` print the batch and the journal that says where the run stopped (on stderr), `backup-run` the row it stopped on |
 | 6 | Finished, but at least one row was held or refused (each named with its reason), or a file-system or work database error stopped a command (the message names the file when the system reports one) |
 
 ## The process, end to end
@@ -109,7 +109,8 @@ again; see [Limits](#limits) for one example.
 
 1. **Report.** `catalogs`, `inventory`, `hash`, `report`. Read `out/summary.md` first: it opens with what could and
    could not be read. Nothing outside the tool folder is changed by this phase. `hash`, `verify` and the report's
-   verdicts skip file rows from partial scans.
+   verdicts skip file rows from partial scans. `verify` prints `mismatch` once for each backup copy that differs
+   from its file, so a file with an exact and a corrupted copy counts in `verified` and in `mismatch`.
 2. **Backup.** `backup-plan`, then read each manifest and approve it by reading it: `backup-run` refuses a manifest
    that breaks its rules but takes no SHA-256 of it. `backup-run <manifest>` as a dry run, then with `--apply`;
    then `backup-verify <manifest>`. A rerun copies only what is missing. Planning needs at least one complete
@@ -120,7 +121,10 @@ again; see [Limits](#limits) for one example.
 4. **Reject check.** `catalogs`, then `rejects`. Read `out/rejects-summary.md`: the count per verdict, what each
    catalog rejected, and, as its last line, the SHA-256 of `out/reject-removal-list.csv`. `out/rejects.csv` gives
    every reject with its verdict and the evidence (`how_decided`). `rejects` selects rejects from the catalogs
-   and uses hashes only from complete library scans when looking for twins.
+   and uses hashes only from complete library scans when looking for twins. For a sidecar named after the full
+   photo name (`IMG_0001.ARW.xmp`), run `inventory` before `rejects` and check that the library scan is complete:
+   `rejects` finds such a sidecar, which no catalog records, only in the latest complete files scan. With a missing
+   or partial scan, or a sidecar added since the scan, an unrecorded sidecar can be left out of the list.
 5. **Pilot.** Pick a few rows (one with a sidecar, one with a twin if any). `stage <list> --approved-sha256 <hex>
    --only <source> ...` as a dry run, then with `--apply`. Open Lightroom: those photos show as missing. Close it,
    `undo <batch> --apply`, and check that nothing else changed. Opening Lightroom changes the catalogs, so run
@@ -139,7 +143,8 @@ again; see [Limits](#limits) for one example.
    list; after an edit, run `copies` again.
 
 If a run is interrupted, run the same command again: the journal records every step before it happens, and
-`undo` and `purge` place an unfinished step by looking at the disk.
+`undo` and `purge` place an unfinished step by looking at the disk. `purge` never deletes a file whose `stage` or
+`restore` step did not finish and that is still in staging: it holds the row (exit 6) and says that `undo` places it.
 
 ## Reject check verdicts
 
@@ -175,7 +180,10 @@ the full text.
   - no catalog holds develop work or a pick for it, with one narrow exception: a byte-identical copy whose
     develop settings equal those of a twin that stays;
   - it exists, is not an online-only placeholder, and lies inside the backup;
-  - its sidecars pass the same tests, because a raw and its sidecars leave together or not at all;
+  - its sidecars pass the same tests, because a raw and its sidecars leave together or not at all (a sidecar is
+    `IMG_0001.xmp`, `IMG_0001.ARW.xmp` or the same names with `.acr`; `rejects` finds the whole-name ones in the
+    files scan; `IMG_0001.ARW.xmp` also belongs to a photo named `IMG_0001.ARW.ARW`, and stays when either photo
+    is kept);
   - every catalog that could record it was read.
 - **A copy leaves only when its twin stays.** A file on the copy list is recorded by no live or shoot catalog, has
   no sidecar, no pick and no develop work in any catalog read, and is byte-identical to a file the live catalog
@@ -202,8 +210,9 @@ the full text.
   `rejects`), then `purge` again.
 - **Exit 4, "run catalogs again"**: a catalog changed since its snapshot (you opened Lightroom). Run `catalogs`,
   and `rejects` if the message asks.
-- **A row held at `stage` or `purge`**: the file, a sidecar, an archive copy or the twin changed or is gone. The row
-  stays where it is; read the named file and reason.
+- **A row held at `stage` or `purge`**: the file, a sidecar, an archive copy or the twin changed, is gone or could
+  not be read (`read_error`: another program holds it, a bad sector, a drive removed during the read). The row stays
+  where it is and the other rows go on; read the named file and reason.
 - **A photo you expected on the list is kept**: `out/rejects.csv` says which catalog keeps it and why. Develop
   settings changed in Lightroom (even by opening a photo in Develop) can end a twin's match.
 
@@ -219,6 +228,13 @@ the full text.
   on.
 - **A sidecar whose name holds `;`** keeps its photo from leaving through a removal list: the list joins sidecars
   with `;`, so the row is held.
+- **A catalog whose file name is 248 UTF-16 units or longer** may not be readable on Windows: SQLite could not open
+  its snapshot copy in one test (SQLite 3.49). The snapshot folder fits, but the catalog is reported as `unreadable`
+  with SQLite's reason and limits coverage, so `stage` and `purge` can refuse with exit 4.
+- **A destination name of 243 UTF-16 code units or more.** `backup-plan` can list it, but `backup-run` refuses
+  the manifest and names the file (exit 2). The part suffix adds 13 units to the destination name, and Windows
+  allows 255 units per component. A character outside the Basic Multilingual Plane, such as an emoji, takes two
+  units. Rename the file in the library and plan again.
 - **A read-only photo** stops `purge` with exit 6 after its sidecars are deleted (their archive copies were checked
   just before). Clear the read-only flag, run `purge` as a dry run again and approve the new SHA-256: the old one is
   refused (exit 2) because the sidecars are gone. A read-only sidecar stops `purge` at that sidecar, as sidecars go

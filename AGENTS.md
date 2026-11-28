@@ -59,8 +59,8 @@ The code decides what leaves a disk, so a reader must be able to check every dec
 
 Anti-patterns:
 
-- A broad `except` (`Exception`, `RuntimeError`, or `sqlite3.DatabaseError` around a whole command) that turns an
-  unrelated error into a promised exit code. Catch the narrowest exception, at the call that raises it.
+- A broad `except` that hides an error's cause, or turns an unrelated error into a promised exit code. Catch the
+  narrowest exception, at the call that raises it; where a handler must be broad, it prints the cause it caught.
 - Work done before a refusal: opening the work database, creating a folder or writing a file. Refusals come first.
 - A message that tells you to run a command that cannot cure the cause it reports.
 - A name the tool derives from a file or catalog name (a part file, a snapshot folder) that is never checked

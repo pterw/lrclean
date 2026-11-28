@@ -60,6 +60,21 @@ class FsPathTests(unittest.TestCase):
                 self.assertEqual(handle.read(), b"raw")
 
 
+class NameUnitsTests(unittest.TestCase):
+    def test_counts_utf16_code_units_including_a_lone_surrogate(self):
+        cases = {
+            "abc": 3,
+            "\u00e9": 1,
+            "\u65e5\u672c": 2,
+            "\U0001F4F7": 2,
+            "a\U0001F4F7": 3,
+            "\ud800": 1,
+        }
+        for name, units in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(paths.name_units(name), units)
+
+
 class SplitTests(unittest.TestCase):
     def test_split_path_mixed_slashes(self):
         self.assertEqual(paths.split_path("c:/a\\b/IMG_0001.ARW"), ("c:/a\\b", "IMG_0001.ARW"))

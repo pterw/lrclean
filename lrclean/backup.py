@@ -32,12 +32,14 @@ BLOCK = 1024 * 1024  # the block size `hashing.full_hash` reads
 def check_manifest(
     rows: Sequence[Row],
     *,
+    n: int,
     archive_roots: list[str],
     library_roots: list[str],
     free_bytes=backup_plan.free_space,
     exists=os.path.exists,
-) -> int:
-    n = backup_plan.archive_index(rows, archive_roots)
+) -> None:
+    real_root = os.path.realpath(archive_roots[n - 1])
+    real_libraries = [os.path.realpath(library) for library in library_roots]
     seen: set[str] = set()
     needed = 0
     for row in rows:
@@ -47,6 +49,13 @@ def check_manifest(
         # Windows drops a final dot or space and reads a colon as a stream: each can open the part file.
         if name.endswith((".", " ")) or ":" in name or name.casefold().endswith(PART_SUFFIX):
             raise ManifestError(f"dest has the name of a part file: {row.dest} (source {row.source})")
+        if paths.name_units(name + PART_SUFFIX) > paths.NAME_LIMIT:
+            raise ManifestError(f"dest name too long for its part file: {row.dest} (source {row.source})")
+        # Non-strict `realpath` resolves the part that exists and keeps the rest,
+        # so a file or folder `backup-run` creates later still counts as below its root.
+        real_dest = os.path.realpath(paths.fs_path(os.path.normpath(row.dest)))
+        if not backup_plan.is_inside(real_dest, real_root) or any(backup_plan.is_inside(real_dest, library) for library in real_libraries):
+            raise ManifestError(f"dest leads through a link out of its archive root or into a library root: {row.dest} (resolves to {real_dest})")
         if row.bytes < 0:
             raise ManifestError(f"negative size for {row.dest}")
         key = paths.norm(os.path.normpath(row.dest))
@@ -57,7 +66,6 @@ def check_manifest(
             needed += row.bytes
     if needed > free_bytes(archive_roots[n - 1]):
         raise ManifestError(f"the manifest needs {needed} bytes, more than the free space")
-    return n
 
 
 def source_changed(row: Row, *, stat=os.stat, attrs_of=None) -> bool:
@@ -145,11 +153,22 @@ def _copy(row, part, tick, stat, attrs_of, open_, writer, rename, utime) -> tupl
     if source_changed(row, stat=stat, attrs_of=attrs_of):
         return CHANGED, ""
     if os.path.exists(paths.fs_path(row.dest)):
-        if _dest_placeholder(row, stat(paths.fs_path(row.dest)), attrs_of):
+        dest_st = stat(paths.fs_path(row.dest))
+        if _dest_placeholder(row, dest_st, attrs_of):
             return DEST_PLACEHOLDER, ""
         src_sha = hashing.full_hash(row.source, open_)
         dest_sha = hashing.full_hash(row.dest, open_)
-        return (ALREADY_THERE if src_sha == dest_sha else CONFLICT), src_sha
+        if src_sha != dest_sha:
+            return CONFLICT, src_sha
+        if dest_st.st_mtime_ns != row.mtime_ns:
+            try:
+                # Another name shares this file's time: setting it would change that file (rule 17).
+                if dest_st.st_nlink > 1:
+                    raise OSError("it has other hard links")
+                utime(paths.fs_path(row.dest), ns=(row.mtime_ns, row.mtime_ns))
+            except OSError as exc:
+                print(f"the modification time of {row.dest} could not be set: {exc}", file=sys.stderr)
+        return ALREADY_THERE, src_sha
     os.makedirs(paths.fs_path(os.path.dirname(row.dest)), exist_ok=True)
     digest = hashlib.sha256()
     with open_(row.source) as source, writer(part) as out:
@@ -251,14 +270,20 @@ def _dest_stat(dest: str) -> tuple[int, int] | None:
     try:
         st = os.stat(paths.fs_path(dest))
     except OSError:
-        return None  # never equals a recorded pair, so a destination that is gone is not skipped
+        return None  # a destination that is gone: the end line records (0, 0)
     return st.st_size, st.st_mtime_ns
 
 
 def _journal_sha(row: Row, verified, stat, attrs_of) -> str:
     """The journal's SHA-256 when it vouches for the destination as it is now, else ''."""
     recorded = verified.get((paths.norm(row.source), paths.norm(row.dest)))
-    if recorded and recorded[:2] == _dest_stat(row.dest) and not source_changed(row, stat=stat, attrs_of=attrs_of):
+    if not recorded:
+        return ""
+    try:
+        st = stat(paths.fs_path(row.dest))
+    except OSError:
+        return ""  # a destination that cannot be stat'ed is not skipped
+    if recorded[:2] == (st.st_size, st.st_mtime_ns) and not _dest_placeholder(row, st, attrs_of) and not source_changed(row, stat=stat, attrs_of=attrs_of):
         if recorded[3:] == (row.bytes, row.mtime_ns):  # the source the journal verified
             return recorded[2]
     return ""
@@ -382,4 +407,4 @@ def _verdict(row: Row, verified, stat, attrs_of, exists) -> str:
         return "dest_exists"
     same = recorded is not None and recorded[:2] == (st.st_size, st.st_mtime_ns)
     same = same and recorded[3:] == (row.bytes, row.mtime_ns)  # the source the journal verified
-    return "already_verified" if same else "dest_placeholder" if _dest_placeholder(row, st, attrs_of) else "dest_exists"
+    return "dest_placeholder" if _dest_placeholder(row, st, attrs_of) else "already_verified" if same else "dest_exists"

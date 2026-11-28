@@ -86,12 +86,9 @@ def _latest_catalogs(conn) -> list:
 
 def _has_lock(source: str, stat) -> bool:
     try:
-        stat(paths.fs_path(source + ".lock"))
-    except FileNotFoundError:
-        return False
+        return catalogs.neighbour_stat(source, ".lock", stat) is not None
     except OSError:
-        pass  # unreadable: fail closed, as if the lock were there
-    return True
+        return True  # unreadable: fail closed, as if the lock were there
 
 
 def _lock(cats, stat, excluded) -> str:
@@ -107,15 +104,19 @@ def link_refusal(base: str, is_link, listdir) -> Refusal | None:
     included, is a link (RC-103, RC-155): a write would leave the tree."""
     work = os.path.join(base, "work")
     snapshots = os.path.join(work, "catalogs")
-    try:
-        entries = [os.path.join(snapshots, name) for name in listdir(snapshots)]
-    except (FileNotFoundError, NotADirectoryError):
-        entries = []
-    except OSError as exc:
-        return Refusal(2, f"{snapshots} cannot be listed ({exc}): its snapshot folders cannot be checked for links")
-    linked = next((folder for folder in (base, work, snapshots, os.path.join(work, "staging"),
-                                         os.path.join(work, "journal"), os.path.join(base, "out"), *entries)
-                   if is_link(folder)), "")
+    folders = (base, work, snapshots, os.path.join(work, "staging"), os.path.join(work, "journal"),
+               os.path.join(base, "out"))
+    entries = []
+    linked = next((folder for folder in folders if is_link(folder)), "")
+    if not linked:
+        try:
+            entries = [os.path.join(snapshots, name) for name in listdir(snapshots)]
+        except (FileNotFoundError, NotADirectoryError):
+            pass
+        except OSError as exc:
+            return Refusal(2, f"{snapshots} cannot be listed ({exc}): its snapshot folders cannot be checked "
+                              "for links")
+        linked = next((folder for folder in entries if is_link(folder)), "")
     if not linked:
         return None
     try:

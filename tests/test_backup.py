@@ -3,6 +3,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import threading
 import time
@@ -10,7 +11,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from lrclean import hashing
+from lrclean import backup_plan, hashing, paths
 from lrclean.backup import (
     PART_SUFFIX,
     Journal,
@@ -26,7 +27,7 @@ from lrclean.backup import (
     run_manifest,
     source_changed,
 )
-from lrclean.backup_plan import ManifestError, Row
+from lrclean.backup_plan import ManifestError, Row, archive_index
 from lrclean.paths import norm
 
 
@@ -49,17 +50,15 @@ class CheckManifestTest(unittest.TestCase):
         return Row(os.path.join(self.lib, "shoot-a", "IMG_0001.ARW"), dest, size, 7, action, "")
 
     def _check(self, rows, *, archive_roots=None, library_roots=None, free=10**9, exists=os.path.exists):
-        return check_manifest(
+        roots = archive_roots or [self.arc]
+        check_manifest(
             rows,
-            archive_roots=archive_roots or [self.arc],
+            n=archive_index(rows, roots),
+            archive_roots=roots,
             library_roots=library_roots or [self.lib],
             free_bytes=lambda _path: free,
             exists=exists,
         )
-
-    def test_rule16_valid_manifest_returns_one_based_archive_number(self):
-        rows = [self._row(os.path.join(self.arc2, "shoot-a", "IMG_0001.ARW"))]
-        self.assertEqual(self._check(rows, archive_roots=[self.arc, self.arc2]), 2)
 
     def test_rule16_bad_dest_or_duplicate_raises_and_creates_nothing(self):
         good = os.path.join(self.arc, "shoot-a", "IMG_0001.ARW")
@@ -84,6 +83,8 @@ class CheckManifestTest(unittest.TestCase):
 
     def test_rule18_dest_named_like_a_part_file_is_refused_by_its_last_component_only(self):
         shoot = os.path.join(self.arc, "shoot-a")
+        astral_fits = "\U0001F4F7" * 121
+        astral_too_long = "\U0001F4F7" * 122
         cases = {
             "exact suffix": (os.path.join(shoot, "IMG_0001.ARW.lrclean-part"), True),
             "suffix in another case": (os.path.join(shoot, "IMG_0001.ARW.LRCLEAN-PART"), True),
@@ -97,6 +98,10 @@ class CheckManifestTest(unittest.TestCase):
             "colon, the data stream": (os.path.join(shoot, "a.ARW::$DATA"), True),
             "dot and space in the middle": (os.path.join(shoot, "my photo.v2.ARW"), False),
             "folder component ending in a dot": (os.path.join(shoot, "x.", "IMG_0001.ARW"), False),
+            "243 ASCII characters": (os.path.join(shoot, "a" * 243), True),
+            "242 ASCII characters": (os.path.join(shoot, "a" * 242), False),
+            "121 astral characters": (os.path.join(shoot, astral_fits), False),
+            "122 astral characters": (os.path.join(shoot, astral_too_long), True),
         }
         for name, (dest, refused) in cases.items():
             with self.subTest(name):
@@ -107,13 +112,101 @@ class CheckManifestTest(unittest.TestCase):
                     self.assertIn(dest, str(caught.exception))
                     self.assertIn(rows[0].source, str(caught.exception))
                 else:
-                    self.assertEqual(self._check(rows), 1)
+                    self._check(rows)
+        self.assertNotEqual(paths.name_units(astral_fits), len(astral_fits))
+        self.assertNotEqual(paths.name_units(astral_too_long), len(astral_too_long))
 
     def test_rule16_dest_in_library_root_raises_even_inside_an_archive_root(self):
         # The archive root contains the library root, so only the library check refuses.
         rows = [self._row(os.path.join(self.lib, "shoot-a", "copy.ARW"))]
         with self.assertRaises(ManifestError):
             self._check(rows, archive_roots=[self.top])
+        # A link in the library leading out of it: only the path text puts this dest in the library.
+        self._junction(os.path.join(self.lib, "jarc"), self.arc)
+        dest = os.path.join(self.lib, "jarc", "IMG_0002.ARW")
+        self.assertTrue(backup_plan.is_inside(dest, self.lib))
+        self.assertFalse(backup_plan.is_inside(os.path.realpath(os.path.dirname(dest)), self.lib))
+        with self.assertRaises(ManifestError):
+            self._check([self._row(dest)], archive_roots=[self.top])
+
+    def _junction(self, link, target):
+        made = subprocess.run(["cmd", "/c", "mklink", "/J", link, target], capture_output=True, text=True)
+        self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+        self.addCleanup(os.rmdir, link)  # the link only, never the target
+
+    def _file_link(self, link, target):
+        os.symlink(target, link)
+        self.assertTrue(os.path.islink(link))
+        self.addCleanup(os.remove, link)  # the link only, never the target
+
+    def test_rule17_dest_through_a_link_into_the_library_is_refused_and_nothing_is_written(self):
+        photo = os.path.join(self.lib, "shoot-a", "IMG_0001.ARW")
+        os.makedirs(os.path.dirname(photo))
+        with open(photo, "wb") as f:
+            f.write(b"raw")
+        os.makedirs(os.path.join(self.arc, "shoot-a"))
+        self._junction(os.path.join(self.arc, "jlib"), self.lib)
+        below_junction = os.path.join(self.arc, "jlib", "shoot-a", "IMG_0001.ARW")
+        file_link = os.path.join(self.arc, "shoot-a", "IMG_0001.ARW")
+        self._file_link(file_link, photo)
+        for name, dest in {"dest below a junction into the library": below_junction, "dest is a file link to a library photo": file_link}.items():
+            with self.subTest(name):
+                self.assertFalse(backup_plan.is_inside(dest, self.lib))  # the path text alone passes
+                lib_before, arc_before = _listing(self.lib), _listing(self.arc)
+                mtime_before = os.stat(photo).st_mtime_ns
+                with self.assertRaises(ManifestError) as caught:
+                    self._check([self._row(dest)])
+                self.assertIn(dest, str(caught.exception))
+                self.assertEqual((_listing(self.lib), _listing(self.arc)), (lib_before, arc_before))
+                self.assertEqual(os.stat(photo).st_mtime_ns, mtime_before)
+
+    def test_rule17_dest_below_a_link_is_refused_only_when_it_leads_out_of_the_archive_root(self):
+        long_folder = os.path.join(self.arc, "shoot-long", *["d" * 50] * 5)
+        os.makedirs(paths.fs_path(long_folder))
+        long_dest = os.path.join(long_folder, "IMG_0004.ARW")
+        jlib, jout = os.path.join(self.top, "arc-jlib"), os.path.join(self.top, "arc-jout")
+        lib_link = os.path.join(self.top, "lib-link")
+        self._junction(lib_link, self.lib)
+        self.assertNotEqual(norm(lib_link), norm(self.lib))
+        # Each row: (junction target or None, folder holding the dest, archive root or None for arc-1, refused).
+        cases = {
+            "library root is a link to the library": (self.lib, os.path.join(self.arc, "jlib2"), self.top, True),
+            "link to a folder in the archive root": (os.path.join(self.arc, "real"), os.path.join(self.arc, "jreal"), None, False),
+            "link to a folder outside both roots": (os.path.join(self.top, "elsewhere"), os.path.join(self.arc, "jout"), None, True),
+            "ordinary folder": (None, os.path.join(self.arc, "shoot-a"), None, False),
+            "archive root is a link into the library": (self.lib, jlib, jlib, True),
+            "archive root is a link to a folder outside both roots": (os.path.join(self.top, "outside"), jout, jout, False),
+        }
+        for name, (target, folder, root, refused) in cases.items():
+            with self.subTest(name):
+                if target is not None:
+                    os.makedirs(target, exist_ok=True)
+                    self._junction(folder, target)
+                dest = os.path.join(folder, "IMG_0001.ARW")
+                roots = [root] if root else None
+                libraries = [lib_link] if name == "library root is a link to the library" else None
+                # Only the resolved dest can decide: the path text of the dest is outside the library.
+                self.assertFalse(backup_plan.is_inside(dest, self.lib))
+                self.assertFalse(backup_plan.is_inside(dest, lib_link))
+                if refused:
+                    with self.assertRaises(ManifestError) as caught:
+                        self._check([self._row(dest)], archive_roots=roots, library_roots=libraries)
+                    self.assertIn(dest, str(caught.exception))
+                else:
+                    self._check([self._row(dest)], archive_roots=roots, library_roots=libraries)
+        with self.subTest("existing folder over 260 characters"):
+            self.assertGreater(len(long_dest), 260)
+            self._check([self._row(long_dest)])
+        with self.subTest("dest is a file link to another file in the archive root"):
+            target = os.path.join(self.arc, "shoot-b", "IMG_0002.ARW")
+            os.makedirs(os.path.dirname(target))
+            with open(target, "wb") as f:
+                f.write(b"raw")
+            file_link = os.path.join(self.arc, "shoot-c", "IMG_0001.ARW")
+            os.makedirs(os.path.dirname(file_link))
+            self._file_link(file_link, target)
+            self.assertNotEqual(norm(file_link), norm(target))
+            self._check([self._row(file_link)])
 
     def test_rule16_free_space_boundary_equal_passes_one_above_raises(self):
         rows = [
@@ -121,25 +214,35 @@ class CheckManifestTest(unittest.TestCase):
             self._row(os.path.join(self.arc, "b.ARW"), size=4),
             self._row(os.path.join(self.arc, "c.ARW"), size=99, action="skip_placeholder"),
         ]
-        self.assertEqual(self._check(rows, free=10), 1)
+        self._check(rows, free=10)
         with self.assertRaises(ManifestError):
             self._check(rows, free=9)
 
     def test_rule16_free_space_is_read_from_the_archive_root_the_manifest_targets(self):
-        rows = [self._row(os.path.join(self.arc2, "a.ARW"), size=5)]
         roots = [self.arc, self.arc2]
 
-        def check(free):
-            return check_manifest(
+        def check(rows, n, free):
+            check_manifest(
                 rows,
+                n=n,
                 archive_roots=roots,
                 library_roots=[self.lib],
                 free_bytes=lambda path: free[path],
             )
 
-        with self.assertRaises(ManifestError):
-            check({self.arc: 10**9, self.arc2: 4})
-        self.assertEqual(check({self.arc: 0, self.arc2: 5}), 2)
+        cases = (
+            (1, self.arc, {self.arc: 4, self.arc2: 10**9}, {self.arc: 5, self.arc2: 0}),
+            (2, self.arc2, {self.arc: 10**9, self.arc2: 4}, {self.arc: 0, self.arc2: 5}),
+        )
+        self.assertNotEqual(self.arc, self.arc2)
+        for n, dest_root, short, enough in cases:
+            with self.subTest(n=n):
+                self.assertNotEqual(short[self.arc], short[self.arc2])
+                self.assertNotEqual(enough[self.arc], enough[self.arc2])
+                rows = [self._row(os.path.join(dest_root, "a.ARW"), size=5)]
+                with self.assertRaises(ManifestError):
+                    check(rows, n, short)
+                check(rows, n, enough)
 
     def test_rule16_existing_dest_does_not_count_toward_free_space(self):
         done = os.path.join(self.arc, "done.ARW")
@@ -147,7 +250,7 @@ class CheckManifestTest(unittest.TestCase):
         with open(done, "wb") as handle:
             handle.write(b"x")
         rows = [self._row(done, size=1000), self._row(new, size=3)]
-        self.assertEqual(self._check(rows, free=3), 1)
+        self._check(rows, free=3)
 
 
 class SourceChangedTest(unittest.TestCase):
@@ -350,10 +453,15 @@ class CopyRowTest(unittest.TestCase):
 
     def test_rule18_existing_identical_dest_is_already_there(self):
         row = self._row(dest_data=b"abcde" * 50)
-        before = _tree(self.arc)
+        wrong = row.mtime_ns + 5_000_000_000
+        os.utime(row.dest, ns=(wrong, wrong))
+        self.assertNotEqual(os.stat(row.dest).st_mtime_ns, row.mtime_ns)
+        [(_path, size, _mtime, digest)] = _tree(self.arc)
         state, sha = copy_row(row)
         self.assertEqual((state, sha), ("already_there", _digest(row.source)))
-        self.assertEqual(_tree(self.arc), before)
+        [(_path, size_after, mtime_after, digest_after)] = _tree(self.arc)
+        self.assertEqual((size_after, digest_after), (size, digest))
+        self.assertEqual(mtime_after, row.mtime_ns)
         self.assertEqual(_parts(self.arc), [])
 
     def test_rule18_existing_different_dest_is_conflict_and_untouched(self):
@@ -367,6 +475,9 @@ class CopyRowTest(unittest.TestCase):
         for name, (data, dest_data) in cases.items():
             with self.subTest(name):
                 row = self._row(data, name=name, dest_data=dest_data)
+                wrong = row.mtime_ns + 5_000_000_000
+                os.utime(row.dest, ns=(wrong, wrong))
+                self.assertNotEqual(os.stat(row.dest).st_mtime_ns, row.mtime_ns)
                 before = _tree(self.arc)
                 self.assertEqual(copy_row(row)[0], "conflict")
                 self.assertEqual(_tree(self.arc), before)
@@ -504,7 +615,49 @@ class CopyRowTest(unittest.TestCase):
         self.assertEqual(copy_row(row, utime=mock.Mock(side_effect=OSError))[0], "failed")
         self.assertEqual(_digest(row.dest), _digest(row.source))
         self.assertEqual(_parts(self.arc), [])
+        wrong = row.mtime_ns + 5_000_000_000
+        os.utime(row.dest, ns=(wrong, wrong))
+        self.assertNotEqual(os.stat(row.dest).st_mtime_ns, row.mtime_ns)
         self.assertEqual(copy_row(row)[0], "already_there")
+        self.assertEqual(os.stat(row.dest).st_mtime_ns, row.mtime_ns)
+
+    def test_rule18_a_utime_that_fails_once_keeps_already_there_and_the_next_run_sets_the_time(self):
+        row = self._row(dest_data=b"abcde" * 50)
+        later, earlier = row.mtime_ns + 5_000_000_000, row.mtime_ns - 5_000_000_000
+        self.assertTrue(earlier < row.mtime_ns < later)
+        # Only OSError is caught: any other error from the time set propagates.
+        os.utime(row.dest, ns=(later, later))
+        with self.assertRaises(ValueError):
+            copy_row(row, utime=mock.Mock(side_effect=ValueError))
+        for wrong in (later, earlier):
+            with self.subTest(wrong=wrong - row.mtime_ns):
+                os.utime(row.dest, ns=(wrong, wrong))
+                with mock.patch("sys.stderr", io.StringIO()) as err:
+                    failing = mock.Mock(side_effect=OSError("denied"))
+                    self.assertEqual(copy_row(row, utime=failing)[0], "already_there")
+                self.assertIn(row.dest, err.getvalue())
+                self.assertIn("denied", err.getvalue())
+                self.assertEqual(os.stat(row.dest).st_mtime_ns, wrong)
+                self.assertEqual(copy_row(row)[0], "already_there")
+                self.assertEqual(os.stat(row.dest).st_mtime_ns, row.mtime_ns)
+        unused = mock.Mock()
+        self.assertEqual(copy_row(row, utime=unused)[0], "already_there")
+        unused.assert_not_called()
+        with self.subTest("a dest hard-linked to a file outside the archive root keeps its time"):
+            other = os.path.join(self.lib, "other", "IMG_0002.ARW")
+            os.makedirs(os.path.dirname(other))
+            shutil.copyfile(row.source, other)
+            os.utime(other, ns=(later, later))
+            os.remove(row.dest)
+            os.link(other, row.dest)
+            self.addCleanup(os.remove, row.dest)  # the link only, never other's folder
+            self.assertEqual(os.stat(row.dest).st_nlink, 2)
+            self.assertNotEqual(os.stat(other).st_mtime_ns, row.mtime_ns)
+            with mock.patch("sys.stderr", io.StringIO()) as err:
+                self.assertEqual(copy_row(row)[0], "already_there")
+            self.assertEqual(os.stat(other).st_mtime_ns, later)
+            self.assertIn(row.dest, err.getvalue())
+            self.assertIn("other hard links", err.getvalue())
 
     def test_b15_a_tick_follows_every_block_read_and_brackets_the_fsync(self):
         row = self._row(bytes(range(256)) * (3 * MIB // 256), dest_data=bytes(3 * MIB))
@@ -743,14 +896,27 @@ class DryRunTest(unittest.TestCase):
         new = self._row("IMG_0005.ARW")
         offline = self._row("IMG_0006.ARW")
         shutil.copyfile(offline.source, offline.dest)
+        offline_verified = self._row("IMG_0007.ARW")  # verified, then turned online-only
+        shutil.copyfile(offline_verified.source, offline_verified.dest)
+        self._journal_verified(offline_verified)
+        unstatable = self._row("IMG_0008.ARW")  # verified, but its destination's stat now fails
+        shutil.copyfile(unstatable.source, unstatable.dest)
+        self._journal_verified(unstatable)
 
         def attrs_of(path, _st):
-            return 0x400000 if path == offline.dest else 0
+            return 0x400000 if path in (offline.dest, offline_verified.dest) else 0
 
-        self.assertNotEqual(attrs_of(offline.dest, None), attrs_of(offline.source, None))
-        rows = [placeholder, changed, verified, exists, new, offline]
+        def stat(path):
+            if path == paths.fs_path(unstatable.dest):
+                raise OSError("synthetic stat failure")
+            return os.stat(path)
+
+        for row in (offline, offline_verified):
+            self.assertNotEqual(attrs_of(row.dest, None), attrs_of(row.source, None))
+        self.assertNotEqual(paths.fs_path(unstatable.dest), paths.fs_path(unstatable.source))
+        rows = [placeholder, changed, verified, exists, new, offline, offline_verified, unstatable]
         before = _listing(self.top)
-        got = dry_run(rows, journal_dir=self.journal_dir, n=1, attrs_of=attrs_of)
+        got = dry_run(rows, journal_dir=self.journal_dir, n=1, stat=stat, attrs_of=attrs_of)
         self.assertEqual(
             got,
             [
@@ -760,6 +926,8 @@ class DryRunTest(unittest.TestCase):
                 (3, "dest_exists"),
                 (4, "copy"),
                 (5, "dest_placeholder"),
+                (6, "dest_placeholder"),
+                (7, "dest_exists"),
             ],
         )
         self.assertEqual(_listing(self.top), before)
@@ -977,9 +1145,17 @@ class RunManifestTest(unittest.TestCase):
              "source_bytes": rows[0].bytes, "source_mtime_ns": rows[0].mtime_ns},
         )  # fmt: skip
         before = self._journal()
-        calls = []
-        again = self._run(rows, opener=lambda p: calls.append(p) or hashing.open_binary(p))
+        calls, stats = [], []
+
+        def stat(path):
+            stats.append(path)
+            return os.stat(path)
+
+        again = self._run(rows, opener=lambda p: calls.append(p) or hashing.open_binary(p), stat=stat)
         self.assertEqual(calls, [])
+        dest_path = paths.fs_path(rows[0].dest)
+        self.assertNotEqual(dest_path, paths.fs_path(rows[0].source))
+        self.assertEqual(stats.count(dest_path), 1)  # a healthy verified skip stats its destination once
         self.assertEqual(self._journal(), before)  # one file, nothing appended
         self.assertEqual(again.results[0], got.results[0])
         self.assertEqual(os.listdir(self.journal_dir), [journal_name(1, self.STARTED)])
@@ -1006,19 +1182,41 @@ class RunManifestTest(unittest.TestCase):
             os.remove(row.dest)
             return "verified"
 
+        offline, unreadable = set(), set()
+
+        def attrs_of(path, _st):
+            return 0x400000 * (path in offline)
+
+        def stat(path):
+            if path in unreadable:
+                raise OSError("synthetic stat failure")
+            return os.stat(path)
+
+        def dest_becomes_placeholder(row):  # same size and time, now online-only
+            offline.add(row.dest)
+            self.assertNotEqual(attrs_of(row.dest, None), attrs_of(row.source, None))
+            return "dest_placeholder"
+
+        def dest_stat_fails(row):  # the one destination stat fails: the skip is declined
+            unreadable.add(paths.fs_path(row.dest))
+            self.assertNotIn(paths.fs_path(row.source), unreadable)
+            return "failed"
+
         cases = [
             (size_alone, {}),
             (time_alone, {}),
             (source_changes, {}),
             (dest_gone, {"content": b"", "mtime_ns": 0}),
+            (dest_becomes_placeholder, {}),
+            (dest_stat_fails, {}),
         ]
         for k, (change, row_args) in enumerate(cases):
             with self.subTest(change.__name__):
                 row = self._row(f"IMG_{k}.ARW", **row_args)
-                self._run([row])
+                self._run([row], stat=stat, attrs_of=attrs_of)
                 lines = len(self._journal())
                 expected = change(row)
-                self.assertEqual(self._run([row]).results[0].state, expected)
+                self.assertEqual(self._run([row], stat=stat, attrs_of=attrs_of).results[0].state, expected)
                 self.assertEqual(len(self._journal()), lines + 2)
                 self.assertTrue(os.path.exists(row.dest))
 

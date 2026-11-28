@@ -177,6 +177,28 @@ class Verify(Fixture):
         c = self.rows([self.lib], [self.bk], depth=1)[("year", "c")]
         self.assertEqual((c["copied_sampled"], c["copied_verified"], c["no_copy"]), (1, 0, 0))
 
+        exact, bad_7, bad_9 = blob(5), blob(5, middle=7), blob(5, middle=9)
+        self.assertEqual(len({exact, bad_7, bad_9}), 3)
+        self.put("lib", "d/IMG_0005.ARW", exact)
+        self.put("bk", "x/IMG_0005.ARW", exact)
+        self.put("bk", "y/IMG_0005.ARW", bad_7)
+        self.put("bk", "z/IMG_0005.ARW", bad_9)
+        self.hash_all([self.lib], [self.bk])
+        counts = self.verify("d")  # one raw, two corrupted copies: each copy counts
+        self.assertEqual((counts["verified"], counts["mismatch"], counts["no_copy"]), (1, 2, 0))
+
+        exact, bad_a, bad_b = blob(6), blob(6, middle=7), blob(6, middle=7)
+        self.assertEqual(bad_a, bad_b)
+        self.assertNotEqual(bad_a, exact)
+        self.put("lib", "e/IMG_0006.ARW", exact)
+        self.put("bk", "x/IMG_0006.ARW", exact)
+        first = self.put("bk", "y/IMG_0006.ARW", bad_a)
+        second = self.put("bk", "z/IMG_0006.ARW", bad_b)
+        self.assertNotEqual(os.path.normcase(first), os.path.normcase(second))
+        self.hash_all([self.lib], [self.bk])
+        counts = self.verify("e")  # two identical corrupted copies are still two copies
+        self.assertEqual((counts["verified"], counts["mismatch"]), (1, 2))
+
     def test_same_file_is_never_its_own_copy_hard_link_and_root_on_both_sides(self):
         lib_file = self.put("lib", "a/IMG_0001.ARW", blob(1))
         self.put("bk", "x/IMG_0001.ARW", b"", link_to=lib_file)

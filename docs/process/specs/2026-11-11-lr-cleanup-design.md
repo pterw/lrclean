@@ -128,19 +128,28 @@ Each rule gets one test that names it.
    recorded by the catalogs that could be read; coverage incomplete", with the cause named. An `empty` catalog
    (no tables) does not count against coverage. A `partial` catalog still adds the records it yielded.
 6. **Catalog snapshots.** A catalog is copied with its `-wal` and `-shm` into its own folder under
-   `work/catalogs/`, named from the source path so that catalogs sharing a file name never collide. The copy is
-   refused while a Lightroom process is running; a stale `.lock` file is not that signal and is only reported.
+   `work/catalogs/`, named from the source path so that catalogs sharing a file name never collide. The
+   folder's name is the catalog's name without its extension, a dash and 12 hex digits; when that would exceed
+   255 UTF-16 code units the name part is cut, so the folder always fits. The copy is refused while a Lightroom
+   process is running, and while the list of processes cannot be read (exit `3`; the message says the list could not
+   be read, not that Lightroom runs); a stale `.lock` file is not that signal and is only reported.
    The copy is opened without `immutable`, so committed write-ahead content is read. The original is opened by
-   nothing but the copy. The `catalogs` command stops with exit `2`, naming the folder, when `work/`,
+   nothing but the copy. In a scan, the Lightroom check comes after the catalog's own attributes are read and
+   before its `-wal` file is read. The `catalogs` command stops with exit `2`, naming the folder, when `work/`,
    `work/catalogs/` or a folder directly inside `work/catalogs/` is a link or junction, or any other folder the
    mover commands already refuse, before any catalog is touched. It stops the same way when `work/catalogs/`
    exists and cannot be listed, since its folders cannot then be checked; a file in its place is not that
    case, and each catalog is then `unreadable`. A snapshot whose folder, with links resolved,
    is or lies inside the catalog's own folder is refused as `unreadable` (rule 7). Before either refusal nothing
-   is removed, created or copied by the `catalogs` command; the work database, which every command opens first,
-   is opened (and created, if new) where `work/` leads, so with `work/` itself a link it is opened inside that
+   is removed, created or copied by the `catalogs` command; the work database, which `main` opens before
+   `catalogs` runs (`stage` and `purge` refuse a link before they open it, rule 38), is opened (and created, if new) where `work/` leads, so with `work/` itself a link it is opened inside that
    folder. A catalog whose `.lrcat`, `-wal` or `-shm` file is an online-only placeholder, or has
-   attributes that cannot be read, is not copied: it is stored as `unreadable` (rule 7). A snapshot is stale when
+   attributes that cannot be read, is not copied: it is stored as `unreadable` (rule 7). A `-wal`, `-shm` or
+   `.lock` name over 255 units cannot exist beside its catalog and is read as absent; its stat failing in any
+   other case is handled as before. Known limit: on Windows, a snapshot copy of a catalog whose file name is 248
+   UTF-16 units or longer failed to open with SQLite 3.49 (a `disk I/O error`; the threshold can differ by
+   version). The snapshot folder fits, but the catalog is stored `unreadable` with SQLite's reason and limits
+   coverage (rule 5). A snapshot is stale when
    its source's size or time has changed, when the size of its `-wal` file differs from the size recorded just
    before the copy, or when a `.lock` file has appeared since; this is checked again when the report is written,
    and a stale snapshot limits coverage (rule 5). Known limit: a `-wal` file rewritten at the same size, with the
@@ -148,8 +157,9 @@ Each rule gets one test that names it.
 7. **Placeholders.** A file with attribute `0x1000`, `0x40000` or `0x400000` is listed and never opened.
 8. **Identical** means same size and same full SHA-256. A sample hash (size, first 64 KB, last 64 KB) only
    filters. Same size alone means nothing: uncompressed raws from one camera share a size.
-9. **Hash rows are an optimisation.** A row is stale when the file's index, size or time no longer match. Nothing
-   in phase A treats a stored hash as proof for a later move. On a library root every photo file is sampled, and
+9. **Hash rows are an optimisation.** A row is stale when the file's index, size or time no longer match. A file
+   found to be an online-only placeholder when it is hashed again loses its row, so a backup copy that became a
+   placeholder no longer counts as copied. Nothing in phase A treats a stored hash as proof for a later move. On a library root every photo file is sampled, and
    files that collide with another library file on size and sample are hashed in full. On a backup root a file is
    sampled only when its size equals that of some library photo file, and is hashed in full only by `verify`.
 10. **Same file, two names.** Two paths with the same volume and file index are one file. They are reported as
@@ -191,8 +201,11 @@ Each rule gets one test that names it.
    compared because a hash is missing or stale.
 5. **Copies on external drives.** Per year folder (`group_depth` levels under the photo root): raws, how many
    have a copy on which backup root, how many have none. A copy matched by size and sample hash is labelled
-   "sampled". `verify` hashes one folder tree and its copies in full and upgrades those rows to "verified". Also:
-   raws on each backup root that are on no library root, per top folder.
+   "sampled". `verify` hashes one folder tree and its copies in full and upgrades those rows to "verified". It
+   counts each file with an exact copy as `verified` and each copy whose full hash differs from its file's as
+   `mismatch` (a file with one exact and one corrupted copy counts in both, so the counts need not add up to the
+   files read). Also: raws on each backup root that are on no library root, per top folder. The summary totals
+   the bytes of the two kinds of row, `year` and `backup_only`, apart, each with its own "By folder" table.
 6. **RAW+JPEG pairs.** Per folder: pairs and the space of the JPEG side, split into "recorded as the raw's
    sidecar", "catalogued as its own photo" and "uncatalogued". While catalog coverage is incomplete (rule 5),
    every row says that a catalog that could not be read, or that changed, may record these files.
@@ -247,7 +260,8 @@ The key is optional for the phase A subcommands and required by the three below.
 - `backup-plan` writes one manifest per archive root, `out/backup-manifest-<n>.csv` (`n` is the root's position
   in `archive_roots`), and a summary. It finds the folders by listing the tree under `photo_root` itself (the
   files scans record raw and JPEG files only), and reads the latest complete files scan of each library root
-  only to count the raws outside `photo_root`.
+  only to count the raws outside `photo_root`. It refuses, exit 2, naming the root, when the drive of an archive
+  root is not connected, before the work database is opened and before anything is written.
   - A folder is selected when it lies under `photo_root` and a photo or video file sits directly in it: its
     extension, ignoring case, is a raw one (`paths.RAW_EXTS`); `jpg` or `jpeg`; `heic`, `heif`, `png`, `tif`,
     `tiff`, `psd`, `psb`, `gif`, `webp` or `bmp`; or `mp4`, `mov`, `m4v`, `avi`, `mts`, `m2ts`, `3gp` or `mkv`.
@@ -297,31 +311,44 @@ Each rule gets one test that names it.
 16. **Approved destinations only.** `backup-run` refuses the whole manifest, before any write, when a `dest` is
     not inside a configured archive root, is inside a library root, or when two rows share a `dest`; and when
     the bytes to copy exceed the free space of the destination volume. It also refuses when the last component
-    of a `dest` ends in `.lrdup-part` (in any letter case), ends in a dot or a space, or holds a colon: Windows
+    of a `dest` ends in `.lrclean-part` (in any letter case), ends in a dot or a space, or holds a colon: Windows
     opens each of those as another file, among them the part file of rule 19, whose cleanup would then delete a
-    destination. The planner still lists every file but a catalog file (a folder is copied whole), so such a
-    file must be renamed in the library before its manifest can run.
+    destination. It also refuses a `dest` whose last component plus `.lrclean-part` is longer than 255 UTF-16 code
+    units (a name of 243 units or more; a character outside the Basic Multilingual Plane counts 2): the part file
+    of rule 19 could not be created. The planner still lists every file but a catalog file (a folder is copied
+    whole), so such a file must be renamed in the library before its manifest can run. `backup-run` also refuses
+    a `dest` that, with links resolved (a junction or a symbolic link followed in the part of the path that
+    exists, the `dest` itself included), is not inside its archive root or is inside a library root, both also
+    with links resolved: the copy would be written where the link leads, and an existing `dest` that is a link
+    would have its modification time set on the file the link leads to.
 17. **Sources are read-only.** A source is opened for reading and nothing under a library root is created,
     changed, renamed or removed. The before-and-after listing of rule 15 holds for a backup run under the photo
-    root; outside it, see Verification.
+    root; outside it, see Verification. This holds through links present when the manifest is checked: a
+    junction inside an archive root that leads into a library root, or a `dest` that is itself a link into one, is
+    refused by rule 16, and nothing is created or changed there. A link made after that check is not seen.
     `backup-verify` refuses, before it reads anything, when the report it would write is a `source` or a `dest`
     of the manifest.
 18. **Never overwrite.** When `dest` exists, both files are hashed in full: identical is `already_there`,
-    different is `conflict`, and the destination is left as it was in both cases. A destination that is an
-    online-only placeholder (rule 7) is never opened: the row is `dest_placeholder`, the destination is left
-    as it was, and the dry run says `dest_placeholder`.
-19. **A copy is verified by content.** The file is written to `<dest>.lrdup-part` in the destination folder
+    different is `conflict`. A conflicting destination is left as it was. An identical one is given the source's
+    modification time when its own differs (rule 19); when that time cannot be set, or the destination has other
+    hard links (another name shares its time, perhaps a library photo: rule 17), the row is still
+    `already_there`, the time is left as it was, and one line naming the destination goes to stderr. A
+    destination that is an online-only placeholder (rule 7) is never opened: the row is `dest_placeholder`, the
+    destination is left as it was, and the dry run says `dest_placeholder`. This holds also for a row the journal
+    records as verified: the placeholder test comes before the journal skip.
+19. **A copy is verified by content.** The file is written to `<dest>.lrclean-part` in the destination folder
     while the source is hashed, then flushed to disk and closed; the part file is read again in full and its
     SHA-256 must equal the source's; the source's size and time must still equal the manifest's; only then is
-    the part file renamed to `dest` (a rename that cannot replace a file) and given the source's time. A
-    mismatch removes the part file and the row is `failed`.
+    the part file renamed to `dest` (a rename that cannot replace a file) and given the source's time. If that
+    time cannot be set the row is `failed`, and the next run finds the destination identical and sets it (rule
+    18). A mismatch removes the part file and the row is `failed`.
 20. **Changed sources are not copied.** A source that is gone, is now a placeholder, or whose size or time
     differs from the manifest is `changed`, and nothing is written for it.
 21. **Journal.** `work/journal/backup-<n>-<started>.jsonl` gets one line before a copy starts and one when it
     ends, with the state and the SHA-256; the end line also records the source's size and time as the manifest
-    gave them. A rerun skips a row the journal records as verified only when the destination's size and time
-    still match AND the row's source size and time equal the recorded ones; a journal line without them gives no
-    skip. So a source that was edited and planned again is compared by content and ends `conflict`, never
+    gave them. A rerun skips a row the journal records as verified only when the destination is not an
+    online-only placeholder (rule 18), its size and time still match AND the row's source size and time equal the
+    recorded ones; a journal line without them gives no skip. So a source that was edited and planned again is compared by content and ends `conflict`, never
     `verified`. `backup-verify` trusts no journal.
 22. **A stalled drive ends the run.** When a read or write makes no progress for `stall_seconds` (default 120),
     the run writes the fact to the journal and exits. A part file left behind is removed by the next run before
@@ -339,7 +366,7 @@ Each rule gets one test that names it.
   file beside photos (never a row), a preview cache (not entered), a storage container and an unknown container
   (walked), a folder in `exclude` and an archive root (not entered), a junction (not followed, counted), a folder
   that cannot be listed (named as not read), a nested photo folder (selected by itself), and a replan of a tree
-  already backed up (every row `already_there` or skipped by the journal, nothing written).
+  already backed up (every row `already_there` or skipped by the journal, no file content written).
 - The copy engine decides "verified", so it ships a planted-defect gate (`tests/mutants/backup.json`).
 - A reviewer runs the three subcommands end to end on a synthetic tree before the real one.
 - The real run is the controller's, from a manifest the owner approved: one small folder to each archive root
@@ -376,8 +403,9 @@ Found by an outside read of the copy engine on 2026-11-17, each reproduced by ru
 - **A nearly full archive drive.** A part file left behind counts against the free space, so a rerun can be
   refused for space until that file is removed by hand; the message does not name it.
 - **Planning again with fewer archive roots** removes the manifests of the higher numbers from `out/`.
-- **Names.** A short 8.3 alias of a part file's name is not recognised. A file name of 245 characters or more
-  cannot be copied (the part file's name would be too long): the row is `failed` on every run.
+- **Names.** A short 8.3 alias of a part file's name is not recognised. A file name of 243 UTF-16 code units or more
+  cannot be copied (the part file's name would be too long): `backup-run` refuses the manifest and names the file
+  (rule 16).
 - **During a comparison.** A source that grows while an existing destination is being compared is reported
   `already_there` in that run and `changed` in the next. An existing destination that is an online-only
   placeholder is refused by `backup-run` as `dest_placeholder` and by `backup-verify` as `unreadable`;
@@ -500,10 +528,15 @@ role. No configuration key is added.
     (rule 5), no catalog keeps it (rule 26: develop work and picks included, except as rule 26a lifts develop work),
     it exists and is not a placeholder (R4), and it has a verified copy on every archive root (rule 27). Its
     sidecars are the sidecar records (`is_sidecar` 1, either path form) of each catalog that rejects the reject, in
-    the same folder with the same base name as the reject. A sidecar that does not exist is ignored. Each existing
-    sidecar must pass the same tests as the reject (not kept, rule 26 included, so no develop work or pick on the
-    sidecar's own path; not a placeholder; archive evidence), and one that fails holds the whole row with its
-    reason: a sidecar path that a catalog records as a photo it does not reject is kept. A raw and its sidecars
+    the same folder with the same base name as the reject. A sidecar named after a whole photo name has two base
+    names, its own and the photo's (`IMG_0001.ARW.xmp` has the base names `IMG_0001.ARW` and `IMG_0001`), so it is
+    a sidecar of both photos and is kept when either is kept. Its sidecars also include the file
+    `<the reject's name>.xmp` or `.acr` of the latest complete files scan of the library roots, which no catalog
+    need record (its spelling is the files scan's); only that exact name is read from the files scan. A sidecar
+    that does not exist is ignored. Each existing sidecar must pass the same tests as the reject (not kept, rule
+    26 included, so no develop work or pick on the sidecar's own path; not a placeholder; archive evidence), and
+    one that fails holds the whole row with its reason: a sidecar path that a catalog records as a photo it does
+    not reject is kept. A raw and its sidecars
     leave together or not at all: a reject that is also an existing sidecar of a reject that is held, by any reason
     including this one, is held with it and takes its verdict. The hold is symmetric for a shared sidecar: when any
     reject is held, every reject whose existing sidecars include a path that the held reject also lists (the shared
@@ -544,9 +577,9 @@ role. No configuration key is added.
     `settings` gains when it is opened (`store.connect`, see the `image` paragraph). It reads the work database
     (the `catalog`, `record` and `image` tables and the latest `catalogs` scans), the configuration, the
     manifests, the verified lists, the `stat` of files and of each catalog source with its `-wal` and `.lock`, and
-    the listing of the catalog roots that rule 5 asks for. It reads `file` and `hash` rows only for rule 26a,
-    with the `stat` of each reject and of each path it tests as a twin; it opens no file or catalog. The listing
-    of rule 15 holds.
+    the listing of the catalog roots that rule 5 asks for. It reads `file` rows for the sidecar names of rule 29
+    and `file` and `hash` rows for rule 26a, with the `stat` of each reject and of each path it tests as a twin;
+    it opens no file or catalog. The listing of rule 15 holds.
 
 ### Verification
 
@@ -691,7 +724,8 @@ to 27, 29 and 30) are not repeated here; B2 checks their result again but does n
     (2), Lightroom (3) and incomplete coverage (4, read from the latest `catalogs` scan as `stage` reads it); it
     skips the freshness test of rule 34 and nothing else of it, and its sources for the path tests are the original
     paths its journal records. `undo` makes none of the whole-run ones but the link test of rule 38 (rule 40). A
-    refusal changes nothing, in `out/` included, and says what to run.
+    refusal changes nothing, in `out/` included, and says what to run. The link test of rule 38 comes before every
+    refusal above, and, for `stage` and `purge`, before the work database is opened.
 34. **Fresh evidence (rule 25 again).** A run is stale when the removal list was made from scans that are not the
     latest ones. `stage` therefore requires `out/rejects-summary.md` to exist (the reject check removes it before it
     replaces the list, so a run that stopped half way leaves none) and the scans it names (kind, id) to be exactly
@@ -727,6 +761,9 @@ to 27, 29 and 30) are not repeated here; B2 checks their result again but does n
     - a row with a `twin` (rule 26a): the twin exists, is not a placeholder, is another file than the reject
       (a different (`st_dev`, `st_ino`)), has the reject's size, and its full hash equals the reject's: reason
       `twin_mismatch`. A reject without a `twin` has no twin to check, and the two archive copies are its keepers.
+    - a read of any of these files (the file, a sidecar, a destination, the twin) fails with an operating-system
+      error (another program holds it, a bad sector, a drive removed during the read): reason `read_error`; the
+      file named is the one whose read failed, and the run goes on with the next row.
     The hash of the file is taken first, then every destination; the file's `stat` is read again just before its
     rename (rule 37), so a file edited during the hashing is `changed`. A read that makes no progress for
     `stall_seconds` ends the run (rule 43).
@@ -754,7 +791,11 @@ to 27, 29 and 30) are not repeated here; B2 checks their result again but does n
     for a journal that names one. Every path B2 writes is tested against these folders before the call, so a wrong
     path is a refusal, not a write. That test reads the spelling of a path, so the folders themselves must be what
     they say: when the tool's folder, `work`, `work/staging`, `work/journal` or `out` exists and is a junction or a
-    symbolic link, `stage`, `undo` and `purge` refuse the run, exit 2, before anything is written.
+    symbolic link, `stage`, `undo` and `purge` refuse the run, exit 2, before anything is written; `stage` and
+    `purge` do so before the work database is opened (`undo` never opens it; `catalogs` opens it first, rule 6).
+    The six folders (these five and `work/catalogs`, rule 6) are tested for a link before `work/catalogs` is
+    listed, so a link is named as a link even when its target cannot be listed; a folder that is no link and
+    cannot be listed is refused as in rule 6.
 39. **Journal.** `work/journal/mover-<batch>.jsonl` is created when `stage --apply` starts, never rewritten, only
     appended, and each line is flushed to disk before the step it announces (the writer of rule 21). Its first line
     records the batch, the list's SHA-256 and the approved one, the scan ids of rule 34 and the start time. Per file
@@ -810,10 +851,15 @@ to 27, 29 and 30) are not repeated here; B2 checks their result again but does n
     the number of files of its family: a family of which fewer files are staged (as defined at the top of this rule)
     or were purged by an earlier `purge` than that number is held (`family_incomplete`), as after a crash between
     the reject's rename and a sidecar's, and nothing of it is deleted; a `stage` `begin` with no `end` counts as not
-    staged even when looking places it as done, so its family is held. A `begin` that cannot be placed (rule 40)
+    staged even when looking places it as done, so its family is held. The same holds for a `restore` `begin` with
+    no `end` that looking places as not done (the file is still staged): its row is held `family_incomplete`, exit
+    `6`, and `purge` says that `undo` places the step; neither is dropped as nothing to purge. A `stage` `begin`
+    placed as not done and a `restore` `begin` placed as done leave the file at its original path. Neither entry
+    on its own brings a row into `purge`'s checks. A staged file, an open step whose file is in staging, or an
+    unplaced entry still brings the row into the checks. A `begin` that cannot be placed (rule 40)
     holds its row (`unplaced`). One failure holds the whole row (`staged_changed`, `archive_mismatch`,
-    `twin_mismatch`, `family_incomplete`, `unplaced`, `outside_folders`) and nothing of it is deleted; the command
-    goes on with the other rows. Right before the first deletion of a row, every file its checks read (each staged
+    `twin_mismatch`, `read_error`, `family_incomplete`, `unplaced`, `outside_folders`) and nothing of it is
+    deleted; the command goes on with the other rows. Right before the first deletion of a row, every file its checks read (each staged
     file, each destination, the twin) is stat-ed again and must have the size, time, `st_dev` and `st_ino` it had
     when it was hashed; otherwise the row is held with that file's reason and nothing of it is deleted. Then, per
     row, the sidecars are deleted first and the reject last, each as a `begin` line, `os.remove`, an `end` line: the
@@ -833,6 +879,10 @@ to 27, 29 and 30) are not repeated here; B2 checks their result again but does n
     again after a step's `begin` line and between the creation of the staged file's folders and its rename, so a
     call that returns late cannot go on to a `begin`, a rename or a removal. The call that stalled may itself still
     complete after the `stalled` line; a step whose `begin` has no `end` is placed by looking (rule 40).
+    When the stall ends the run, `stage` and `purge` first write to standard error the line `batch <batch>` and, in an
+    apply run, the line `journal <path>` (a dry run of `stage` has no journal and writes only the batch line; neither
+    line is preceded by a file lookup, because the stalled drive may be the journal's); standard output is not used,
+    because a process ended this way loses what it has not flushed when its output is redirected.
 44. **Exit codes.** `0` every processed row was staged, purged or restored (or nothing was to do); `2`
     configuration, list, an invalid journal line (rule 39) or approved SHA-256 refused, or a list file, a batch's
     journal or its `start` line missing; `3` Lightroom is running or a catalog is locked; `4` the evidence is not
@@ -1036,8 +1086,9 @@ rule it could not reuse.
     (the records of rule 24, not its `keeps` alone; the copies of the live catalog in `old_states` keep nothing,
     R13). `work`: any catalog read, the catalogs in `old_states` included, has an image of it with a pick of 1,
     with develop work, or with a develop state that cannot be read (rule 26, second sentence; rule 26a is not
-    applied). `sidecar`: a file with extension `xmp` or `acr`, in its folder with its base name, is in the same
-    complete `files` scan or recorded as a sidecar by any catalog read (either form). `twin_rejected` (rule 46).
+    applied). `sidecar`: a file with extension `xmp` or `acr`, in its folder with its base name, or named after
+    its whole file name plus that extension, is in the same complete `files` scan or recorded as a sidecar by any
+    catalog read (either form). `twin_rejected` (rule 46).
     `changed`: its `stat` now differs from its `files` row (size, time, file index) or its file is gone.
     `no_archive_copy`: it lacks a verified copy on every archive root (rule 27, read by
     `reject_archive.archive_state` with that `stat`, all its states under this one name). Last, `no_keeper`: it

@@ -30,6 +30,10 @@ class LightroomRunning(RuntimeError):
     pass
 
 
+class ProcessListUnreadable(LightroomRunning):
+    pass
+
+
 class CatalogRead(NamedTuple):
     status: str
     db_version: str
@@ -45,10 +49,10 @@ def running_processes() -> list[str]:
         done = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True,
                               text=True, timeout=30, check=True)
     except (OSError, UnicodeDecodeError, subprocess.SubprocessError) as exc:
-        raise RuntimeError(f"cannot list processes: {exc}") from exc
+        raise ProcessListUnreadable(f"cannot list processes: {exc}") from exc
     names = [row[0].lower() for row in csv.reader(done.stdout.splitlines()) if row]
     if not names:
-        raise RuntimeError("cannot list processes: tasklist returned nothing")
+        raise ProcessListUnreadable("cannot list processes: tasklist returned nothing")
     return names
 
 
@@ -80,25 +84,42 @@ def find_catalogs(root: str, own_dir: str, exclude: list[str],
     return sorted(found), sorted(unlisted)
 
 
-def snapshot_catalog(source: str, work_dir: str, processes=running_processes, stat=os.stat) -> str:
+def _refuse_if_running(processes) -> None:
     if any(name.startswith("lightroom") for name in processes()):
         raise LightroomRunning("Lightroom is running: refusing to copy a catalog")
+
+
+def neighbour_stat(source: str, suffix: str, stat=os.stat) -> os.stat_result | None:
+    """The stat of `source + suffix`; None when it is absent or its name is too long to exist."""
+    try:
+        return stat(paths.fs_path(source + suffix))
+    except FileNotFoundError:
+        return None
+    except OSError:
+        if paths.name_units(os.path.basename(source) + suffix) > paths.NAME_LIMIT:
+            return None
+        raise
+
+
+def snapshot_catalog(source: str, work_dir: str, processes=running_processes, stat=os.stat) -> str:
+    _refuse_if_running(processes)
     work = paths.norm(os.path.abspath(work_dir))
     home = paths.norm(os.path.abspath(os.path.dirname(source)))
     if work == home or work.startswith(home.rstrip("/") + "/"):
         raise ValueError("the work folder is inside the catalog's folder")
     for suffix in _SUFFIXES:
         try:
-            attrs = getattr(stat(paths.fs_path(source + suffix)), "st_file_attributes", 0)
-        except FileNotFoundError:
-            continue
+            found = neighbour_stat(source, suffix, stat)
         except OSError as exc:
             raise ValueError(f"the attributes of {source + suffix} cannot be read: {exc}") from exc
-        if paths.is_placeholder(attrs):
+        if paths.is_placeholder(getattr(found, "st_file_attributes", 0)):
             raise ValueError(f"{source + suffix} is an online-only placeholder: refusing to copy it")
     name = os.path.basename(source)
     digest = hashlib.sha1(paths.norm(source).encode("utf-8")).hexdigest()[:12]
-    folder = os.path.join(work_dir, "catalogs", f"{os.path.splitext(name)[0]}-{digest}")
+    stem = os.path.splitext(name)[0]
+    while paths.name_units(f"{stem}-{digest}") > paths.NAME_LIMIT:
+        stem = stem[:-1]
+    folder = os.path.join(work_dir, "catalogs", f"{stem}-{digest}")
     real_folder, real_home = (paths.norm(os.path.realpath(p)) for p in (folder, os.path.dirname(source)))
     if real_folder == real_home or real_folder.startswith(real_home.rstrip("/") + "/"):
         raise ValueError("the snapshot folder, with links resolved, is inside the catalog's folder")
@@ -114,25 +135,14 @@ def snapshot_catalog(source: str, work_dir: str, processes=running_processes, st
     return os.path.join(folder, name)
 
 
-def _exists(path: str, stat) -> bool:
-    """Whether `path` is there; any error but not-found propagates."""
-    try:
-        stat(path)
-    except FileNotFoundError:
-        return False
-    return True
-
-
 def is_stale(source_path: str, size: int, mtime_ns: int, wal_bytes: int, has_lock: int,
              stat=os.stat) -> bool:
     """True when the .lrcat, its -wal file or a new .lock differs from the snapshot (rule 6)."""
     try:
         now = stat(paths.fs_path(source_path))
-        try:
-            wal_now = stat(paths.fs_path(source_path + "-wal")).st_size
-        except FileNotFoundError:
-            wal_now = 0
-        lock_new = not has_lock and _exists(paths.fs_path(source_path + ".lock"), stat)
+        wal = neighbour_stat(source_path, "-wal", stat)
+        wal_now = wal.st_size if wal else 0
+        lock_new = not has_lock and neighbour_stat(source_path, ".lock", stat) is not None
     except OSError:
         return True
     return (now.st_size, now.st_mtime_ns, wal_now) != (size, mtime_ns, wal_bytes) or lock_new
@@ -318,13 +328,13 @@ def _store_catalog(conn, scan_id, source, role, processes, work_dir, stat=os.sta
         reason = f"the attributes of {source} cannot be read: {exc}"
     else:
         size, mtime_ns = found.st_size, found.st_mtime_ns
+        _refuse_if_running(processes)
         try:
             try:
-                wal_bytes = stat(paths.fs_path(source + "-wal")).st_size
-            except FileNotFoundError:
-                pass
+                wal = neighbour_stat(source, "-wal", stat)
             except OSError as exc:
                 raise ValueError(f"the attributes of {source}-wal cannot be read: {exc}") from exc
+            wal_bytes = wal.st_size if wal else 0
             snapshot = snapshot_catalog(source, work_dir, processes, stat)
             result = read_snapshot(snapshot, source)
         except ValueError as exc:
