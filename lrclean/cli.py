@@ -317,8 +317,9 @@ def _backup_run(run: _Run) -> int:
     def check(rows):
         n = backup_plan.archive_index(rows, roots)
         _require_connected_drive(run, roots[n - 1])
-        return backup.check_manifest(rows, archive_roots=roots, library_roots=run.cfg["library_roots"],
-                                     free_bytes=run.free_bytes, exists=run.exists)
+        backup.check_manifest(rows, n=n, archive_roots=roots, library_roots=run.cfg["library_roots"],
+                              free_bytes=run.free_bytes, exists=run.exists)
+        return n
 
     rows, n = _manifest_rows(run, check)
     journal_dir = os.path.join(run.base, "work", "journal")

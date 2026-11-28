@@ -27,7 +27,7 @@ from lrclean.backup import (
     run_manifest,
     source_changed,
 )
-from lrclean.backup_plan import ManifestError, Row
+from lrclean.backup_plan import ManifestError, Row, archive_index
 from lrclean.paths import norm
 
 
@@ -50,17 +50,15 @@ class CheckManifestTest(unittest.TestCase):
         return Row(os.path.join(self.lib, "shoot-a", "IMG_0001.ARW"), dest, size, 7, action, "")
 
     def _check(self, rows, *, archive_roots=None, library_roots=None, free=10**9, exists=os.path.exists):
-        return check_manifest(
+        roots = archive_roots or [self.arc]
+        check_manifest(
             rows,
-            archive_roots=archive_roots or [self.arc],
+            n=archive_index(rows, roots),
+            archive_roots=roots,
             library_roots=library_roots or [self.lib],
             free_bytes=lambda _path: free,
             exists=exists,
         )
-
-    def test_rule16_valid_manifest_returns_one_based_archive_number(self):
-        rows = [self._row(os.path.join(self.arc2, "shoot-a", "IMG_0001.ARW"))]
-        self.assertEqual(self._check(rows, archive_roots=[self.arc, self.arc2]), 2)
 
     def test_rule16_bad_dest_or_duplicate_raises_and_creates_nothing(self):
         good = os.path.join(self.arc, "shoot-a", "IMG_0001.ARW")
@@ -114,7 +112,7 @@ class CheckManifestTest(unittest.TestCase):
                     self.assertIn(dest, str(caught.exception))
                     self.assertIn(rows[0].source, str(caught.exception))
                 else:
-                    self.assertEqual(self._check(rows), 1)
+                    self._check(rows)
         self.assertNotEqual(paths.name_units(astral_fits), len(astral_fits))
         self.assertNotEqual(paths.name_units(astral_too_long), len(astral_too_long))
 
@@ -179,10 +177,10 @@ class CheckManifestTest(unittest.TestCase):
                         self._check([self._row(dest)], archive_roots=roots, library_roots=libraries)
                     self.assertIn(dest, str(caught.exception))
                 else:
-                    self.assertEqual(self._check([self._row(dest)], archive_roots=roots, library_roots=libraries), 1)
+                    self._check([self._row(dest)], archive_roots=roots, library_roots=libraries)
         with self.subTest("existing folder over 260 characters"):
             self.assertGreater(len(long_dest), 260)
-            self.assertEqual(self._check([self._row(long_dest)]), 1)
+            self._check([self._row(long_dest)])
 
     def test_rule16_free_space_boundary_equal_passes_one_above_raises(self):
         rows = [
@@ -190,7 +188,7 @@ class CheckManifestTest(unittest.TestCase):
             self._row(os.path.join(self.arc, "b.ARW"), size=4),
             self._row(os.path.join(self.arc, "c.ARW"), size=99, action="skip_placeholder"),
         ]
-        self.assertEqual(self._check(rows, free=10), 1)
+        self._check(rows, free=10)
         with self.assertRaises(ManifestError):
             self._check(rows, free=9)
 
@@ -199,8 +197,9 @@ class CheckManifestTest(unittest.TestCase):
         roots = [self.arc, self.arc2]
 
         def check(free):
-            return check_manifest(
+            check_manifest(
                 rows,
+                n=2,
                 archive_roots=roots,
                 library_roots=[self.lib],
                 free_bytes=lambda path: free[path],
@@ -208,7 +207,7 @@ class CheckManifestTest(unittest.TestCase):
 
         with self.assertRaises(ManifestError):
             check({self.arc: 10**9, self.arc2: 4})
-        self.assertEqual(check({self.arc: 0, self.arc2: 5}), 2)
+        check({self.arc: 0, self.arc2: 5})
 
     def test_rule16_existing_dest_does_not_count_toward_free_space(self):
         done = os.path.join(self.arc, "done.ARW")
@@ -216,7 +215,7 @@ class CheckManifestTest(unittest.TestCase):
         with open(done, "wb") as handle:
             handle.write(b"x")
         rows = [self._row(done, size=1000), self._row(new, size=3)]
-        self.assertEqual(self._check(rows, free=3), 1)
+        self._check(rows, free=3)
 
 
 class SourceChangedTest(unittest.TestCase):

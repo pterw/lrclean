@@ -32,12 +32,12 @@ BLOCK = 1024 * 1024  # the block size `hashing.full_hash` reads
 def check_manifest(
     rows: Sequence[Row],
     *,
+    n: int,
     archive_roots: list[str],
     library_roots: list[str],
     free_bytes=backup_plan.free_space,
     exists=os.path.exists,
-) -> int:
-    n = backup_plan.archive_index(rows, archive_roots)
+) -> None:
     real_root = os.path.realpath(archive_roots[n - 1])
     real_libraries = [os.path.realpath(library) for library in library_roots]
     seen: set[str] = set()
@@ -64,7 +64,6 @@ def check_manifest(
             needed += row.bytes
     if needed > free_bytes(archive_roots[n - 1]):
         raise ManifestError(f"the manifest needs {needed} bytes, more than the free space")
-    return n
 
 
 def _real_folder(dest: str) -> str:

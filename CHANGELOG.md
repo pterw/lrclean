@@ -33,6 +33,8 @@
   photo and `copies` holds a copy that has one (#11).
 - `catalogs` ends with exit 3 only for Lightroom running or an unreadable process list; any other `RuntimeError` in a
   catalog scan is no longer reported as "Lightroom running" (R4).
+- Internal: `backup-run` reads the archive number once, and the exit-code test table has one column for each meaning
+  (R3). No behaviour changes.
 
 ## 0.1.1 - 2026-11-27
 

@@ -1202,6 +1202,27 @@ class BackupRunTests(BackupCase):
         self.assertEqual(len(self.stdout.splitlines()), 2)
         self.assertIn(" copy ", self.stdout)
 
+    def test_dry_run_reads_free_space_only_from_the_second_archive_root(self):
+        self.write_manifest(["IMG_0001.ARW", "IMG_0002.ARW"], dest_root=self.arch2)
+        synth.make_tree(self.arch2, {"shoot-a/IMG_0001.ARW": b"a" * 100})
+        dest_exists = os.path.join(self.arch2, "shoot-a", "IMG_0001.ARW")
+        dest_to_copy = os.path.join(self.arch2, "shoot-a", "IMG_0002.ARW")
+        self.assertNotEqual(self.arch1, self.arch2)
+        self.assertNotEqual(dest_exists, dest_to_copy)
+        space = {self.arch1: 0, self.arch2: 1000}
+        self.assertLess(space[self.arch1], 100)
+        self.assertGreater(space[self.arch2], 100)
+        reads = []
+
+        def free_bytes(root):
+            reads.append(root)
+            return space[root]
+
+        code, err = self.go("backup-run", self.manifest, free_bytes=free_bytes)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.stdout.splitlines(), [f"0 dest_exists {dest_exists}", f"1 copy {dest_to_copy}"])
+        self.assertEqual(reads, [self.arch2])
+
     def test_apply_copies_a_clean_tree_with_exit_zero_and_a_tally(self):
         code, err = self.go("backup-run", self.manifest, "--apply")
         self.assertEqual((code, err), (0, ""))
@@ -3113,37 +3134,37 @@ class ExitCodeTests(RejectsCase):
         backup_plan.write_manifest(stranded, [backup_plan.Row(
             source, os.path.join(gone, "shoot-a", "IMG_0001.ARW"), 100, os.stat(source).st_mtime_ns, "copy", "")])
         cases = (
-            ("backup-plan on a missing drive", ("backup-plan",), 2, gone, {"archive_roots": [gone]}, None, {}),
-            ("backup-plan, only the second root on a missing drive", ("backup-plan",), 2, gone,
+            ("backup-plan on a missing drive", ("backup-plan",), 2, gone, None, {"archive_roots": [gone]}, None, {}),
+            ("backup-plan, only the second root on a missing drive", ("backup-plan",), 2, gone, None,
              {"archive_roots": [self.arch[0], gone]}, None, {}),
-            ("backup-run on a missing drive", ("backup-run", stranded), 2, gone,
+            ("backup-run on a missing drive", ("backup-run", stranded), 2, gone, None,
              {"archive_roots": [gone]}, None, {"free_bytes": no_free_space_read}),
-            ("backup-run, the manifest's own second drive is missing", ("backup-run", stranded), 2, gone,
+            ("backup-run, the manifest's own second drive is missing", ("backup-run", stranded), 2, gone, None,
              {"archive_roots": [self.arch[0], gone]}, None, {"free_bytes": no_free_space_read}),
-            ("backup-run --apply on a missing drive", ("backup-run", stranded, "--apply"), 2, gone,
+            ("backup-run --apply on a missing drive", ("backup-run", stranded, "--apply"), 2, gone, None,
              {"archive_roots": [gone]}, None, {"free_bytes": no_free_space_read}),
-            ("backup-run while the other drive is missing", ("backup-run", manifest), 0,
+            ("backup-run while the other drive is missing", ("backup-run", manifest), 0, None,
              f"0 dest_exists {dest}", {"archive_roots": [self.arch[0], gone]}, None,
              {"free_bytes": {self.arch[0]: 1000}.__getitem__}),
             ("backup-run --apply, journal folder is a file", ("backup-run", manifest, "--apply"), 6,
-             "journal", {}, ("work/journal", False), {}),
+             "journal", None, {}, ("work/journal", False), {}),
             ("backup-verify, list is a folder", ("backup-verify", manifest), 6,
-             "backup-verified-1.csv", {}, ("out/backup-verified-1.csv", True), {}),
-            ("rejects, output is a folder", ("rejects",), 6, "rejects.csv.tmp", {},
+             "backup-verified-1.csv", None, {}, ("out/backup-verified-1.csv", True), {}),
+            ("rejects, output is a folder", ("rejects",), 6, "rejects.csv.tmp", None, {},
              ("out/rejects.csv.tmp", True), {}),
-            ("catalogs, tasklist fails", ("catalogs",), 3, "cannot list processes", {}, None,
+            ("catalogs, tasklist fails", ("catalogs",), 3, "cannot list processes", None, {}, None,
              {"processes": catalogs.running_processes, "error": subprocess.CalledProcessError(1, "tasklist")}),
-            ("catalogs, tasklist times out", ("catalogs",), 3, "cannot list processes", {}, None,
+            ("catalogs, tasklist times out", ("catalogs",), 3, "cannot list processes", None, {}, None,
              {"processes": catalogs.running_processes, "error": subprocess.TimeoutExpired("tasklist", 30)}),
-            ("catalogs, tasklist fails before snapshot", ("catalogs",), 3, "cannot list processes", {}, None,
+            ("catalogs, tasklist fails before snapshot", ("catalogs",), 3, "cannot list processes", None, {}, None,
              {"processes": mock.Mock(side_effect=[
                  ["explorer.exe"], catalogs.ProcessListUnreadable("cannot list processes")])}),
-            ("catalogs, work database is not a database", ("catalogs",), 6, database, {},
+            ("catalogs, work database is not a database", ("catalogs",), 6, database, None, {},
              ("work/lrclean.sqlite", False), {}),
-            ("catalogs, work database is a folder", ("catalogs",), 6, database, {},
+            ("catalogs, work database is a folder", ("catalogs",), 6, database, None, {},
              ("work/lrclean.sqlite", True), {}),
         )
-        for name, argv, code, named, config, occupied, extra in cases:
+        for name, argv, code, in_err, out_line, config, occupied, extra in cases:
             with self.subTest(name):
                 self.write_config({**self.config, **config})
                 self.steps()
@@ -3161,9 +3182,10 @@ class ExitCodeTests(RejectsCase):
                 self.assertEqual(got, code, err)
                 if code == 0:
                     self.assertEqual(err, "")
-                    self.assertEqual(self.stdout.splitlines(), [named])
-                else:
-                    self.assertIn(named, err)
+                if out_line is not None:
+                    self.assertEqual(self.stdout.splitlines(), [out_line])
+                if in_err is not None:
+                    self.assertIn(in_err, err)
                 self.assertNotIn("Traceback", err)
                 self.assertEqual(self.listings(), before)
 
