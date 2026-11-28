@@ -589,16 +589,23 @@ class CopyRowTest(unittest.TestCase):
 
     def test_rule18_a_utime_that_fails_once_keeps_already_there_and_the_next_run_sets_the_time(self):
         row = self._row(dest_data=b"abcde" * 50)
-        wrong = row.mtime_ns + 5_000_000_000
-        os.utime(row.dest, ns=(wrong, wrong))
-        self.assertNotEqual(wrong, row.mtime_ns)
-        with mock.patch("sys.stderr", io.StringIO()) as err:
-            self.assertEqual(copy_row(row, utime=mock.Mock(side_effect=OSError("denied")))[0], "already_there")
-        self.assertIn(row.dest, err.getvalue())
-        self.assertIn("denied", err.getvalue())
-        self.assertEqual(os.stat(row.dest).st_mtime_ns, wrong)
-        self.assertEqual(copy_row(row)[0], "already_there")
-        self.assertEqual(os.stat(row.dest).st_mtime_ns, row.mtime_ns)
+        later, earlier = row.mtime_ns + 5_000_000_000, row.mtime_ns - 5_000_000_000
+        self.assertTrue(earlier < row.mtime_ns < later)
+        # Only OSError is caught: any other error from the time set propagates.
+        os.utime(row.dest, ns=(later, later))
+        with self.assertRaises(ValueError):
+            copy_row(row, utime=mock.Mock(side_effect=ValueError))
+        for wrong in (later, earlier):
+            with self.subTest(wrong=wrong - row.mtime_ns):
+                os.utime(row.dest, ns=(wrong, wrong))
+                with mock.patch("sys.stderr", io.StringIO()) as err:
+                    failing = mock.Mock(side_effect=OSError("denied"))
+                    self.assertEqual(copy_row(row, utime=failing)[0], "already_there")
+                self.assertIn(row.dest, err.getvalue())
+                self.assertIn("denied", err.getvalue())
+                self.assertEqual(os.stat(row.dest).st_mtime_ns, wrong)
+                self.assertEqual(copy_row(row)[0], "already_there")
+                self.assertEqual(os.stat(row.dest).st_mtime_ns, row.mtime_ns)
         unused = mock.Mock()
         self.assertEqual(copy_row(row, utime=unused)[0], "already_there")
         unused.assert_not_called()
