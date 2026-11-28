@@ -92,6 +92,12 @@ class KeptTest(unittest.TestCase):
         self.assertFalse(is_kept(view(picks={P: [-1]}, sidecars=[SIDE]), SIDE))
         self.assertTrue(is_kept(view(picks={P: [0]}, sidecars=[SIDE]), SIDE))
 
+    def test_sidecar_named_after_the_whole_photo_name_keeps_only_for_a_photo_not_rejected(self):
+        double = P + ".xmp"
+        self.assertNotEqual(double, SIDE)
+        self.assertFalse(is_kept(view(picks={P: [-1]}, sidecars=[double]), double))
+        self.assertTrue(is_kept(view(picks={P: [-1], "d:/lib/shoot-a/img_0001.jpg": [0]}, sidecars=[double]), double))
+
     def test_sidecar_of_another_base_or_folder_does_not_keep(self):
         for name, photo in (("base", OTHER), ("folder", "d:/lib/shoot-b/img_0001.arw")):
             with self.subTest(name):
@@ -199,6 +205,34 @@ class SidecarsTest(unittest.TestCase):
     def test_other_base_other_folder_and_the_path_itself_are_not_returned(self):
         v = self.rejecting("a", ["d:/lib/shoot-a/img_0002.xmp", "d:/lib/shoot-b/img_0001.xmp", P])
         self.assertEqual(sidecars_of([v], P), {})
+
+    def test_sidecar_named_after_the_whole_photo_name_is_returned_beside_the_base_name_one(self):
+        double = P + ".xmp"
+        cases = {"double only": [double], "both": [double, SIDE]}
+        for name, sides in cases.items():
+            with self.subTest(name):
+                self.assertEqual(sidecars_of([self.rejecting("a", sides)], P), {s: s for s in sides})
+
+    def test_dotted_photo_name_is_not_the_sidecar_owner_of_its_first_part(self):
+        dotted, short = "d:/lib/shoot-a/shoot.2019.arw", "d:/lib/shoot-a/shoot.xmp"
+        self.assertNotEqual(base_index([dotted]).keys(), base_index([short]).keys())
+        v = self.rejecting("a", [short], picks={dotted: [-1]})
+        self.assertEqual(sidecars_of([v], dotted), {})
+
+    def test_files_scan_adds_only_the_whole_name_sidecars_with_their_spelling(self):
+        xmp, acr = "D:/Lib/shoot-a/IMG_0001.ARW.xmp", "D:/Lib/shoot-a/img_0001.arw.ACR"
+        self.assertNotEqual(xmp.lower()[-3:], acr.lower()[-3:])
+        files = {P + ".xmp": xmp, SIDE: "D:/Lib/shoot-a/IMG_0001.xmp"}
+        self.assertEqual(sidecars_of([self.rejecting("a", [])], P, files_sidecars=files), {P + ".xmp": xmp})
+        both = {P + ".xmp": xmp, P + ".acr": acr}
+        self.assertEqual(sidecars_of([self.rejecting("a", [])], P, files_sidecars=both), both)
+
+    def test_files_scan_sidecar_also_recorded_is_one_entry_and_needs_a_rejecting_view(self):
+        double = P + ".xmp"
+        files = {double: "D:/Lib/shoot-a/IMG_0001.ARW.xmp"}
+        recorded = self.rejecting("a", [double], {double: "D:/Cat/IMG_0001.ARW.xmp"})
+        self.assertEqual(sidecars_of([recorded], P, files_sidecars=files), {double: "D:/Cat/IMG_0001.ARW.xmp"})
+        self.assertEqual(sidecars_of([view(picks={P: [0]})], P, files_sidecars=files), {})
 
     def test_prebuilt_indexes_are_used(self):
         v = self.rejecting("a", [SIDE])

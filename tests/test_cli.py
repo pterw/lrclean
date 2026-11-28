@@ -1645,6 +1645,43 @@ class RejectsRunTests(RejectsCase):
         self.assertEqual([r["bytes"] for r in self.table("reject-removal-list.csv")], ["100"])
         self.assertIn("1 rejects", self.stdout)
 
+    def test_a_sidecar_named_after_the_whole_photo_name_travels_from_the_files_scan(self):
+        self.steps()
+        self.assertEqual(self.run_cli("inventory")[0], 0)
+        self.assertEqual(self.go()[0], 0)
+        self.assertEqual(self.verdicts(), ["on_list"])
+        side, data = os.path.join(self.lib, "shoot-a", "IMG_0001.ARW.xmp"), b"s" * 7
+        self.assertNotEqual(len(data), 100)
+        synth.make_tree(self.lib, {"shoot-a/IMG_0001.ARW.xmp": data})
+        self.assertEqual(self.run_cli("inventory")[0], 0)
+        con = sqlite3.connect(os.path.join(self.base, "work", "lrclean.sqlite"))
+        try:
+            spelled = {r[0] for r in con.execute("SELECT path_orig FROM file WHERE ext = 'xmp'")}
+        finally:
+            con.close()
+        self.assertEqual(len(spelled), 1)
+        spelled = spelled.pop()
+        self.assertEqual(self.go()[0], 0)
+        row = self.table("rejects.csv")[0]
+        self.assertEqual(row["verdict"], "outside_backup")
+        self.assertIn(f"held by: {spelled}", row["how_decided"])
+        raw = os.path.join(self.lib, "shoot-a", "IMG_0001.ARW")
+        st_raw, st_side = os.stat(raw), os.stat(side)
+        for n, arch in enumerate(self.arch, start=1):
+            dests = [os.path.join(arch, "shoot-a", name) for name in ("IMG_0001.ARW", "IMG_0001.ARW.xmp")]
+            synth.make_tree(arch, {"shoot-a/IMG_0001.ARW.xmp": data})
+            backup_plan.write_manifest(os.path.join(self.out_dir(), f"backup-manifest-{n}.csv"), [
+                backup_plan.Row(raw, dests[0], 100, st_raw.st_mtime_ns, "copy", ""),
+                backup_plan.Row(side, dests[1], 7, st_side.st_mtime_ns, "copy", "")])
+            backup_verify.write_verified(os.path.join(self.out_dir(), f"backup-verified-{n}.csv"), [
+                backup_verify.Verified(raw, dests[0], 100, "0" * 64, "identical"),
+                backup_verify.Verified(side, dests[1], 7, "1" * 64, "identical")])
+        self.assertEqual(self.run_cli("inventory")[0], 0)
+        self.assertEqual(self.go()[0], 0)
+        self.assertEqual(self.verdicts(), ["on_list"])
+        listed = self.table("reject-removal-list.csv")
+        self.assertEqual([(r["sidecars"], r["sidecar_bytes"]) for r in listed], [(spelled, "7")])
+
     def test_no_reject_writes_headers_only(self):
         self.catalog_of(self.live, [(1, 0), (2, 0)])
         self.catalog_of(self.catalog, [(1, 0)])

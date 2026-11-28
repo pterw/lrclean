@@ -546,9 +546,13 @@ def _prologue(run: _Run) -> _Prologue:
 
 def _rejects_run(run: _Run) -> int:
     pro = _prologue(run)
+    files_sidecars = {r["path_norm"]: r["path_orig"]
+                      for r in classify.inventoried_files(run.conn, run.cfg["library_roots"])
+                      if r["ext"] in paths.SIDECAR_EXTS}
     found = rejects.decide(pro.views, pro.evidence, coverage_complete=pro.cov.complete, stat=run.stat,
                            attrs_of=run.attrs_of,
-                           hashes=reject_twin.load_hashes(run.conn, run.cfg["library_roots"]))
+                           hashes=reject_twin.load_hashes(run.conn, run.cfg["library_roots"]),
+                           files_sidecars=files_sidecars)
     reject_out.write_outputs(pro.out_dir, found, roots=len(pro.roots), summary=pro.summary)
     print(f"reject check written to {pro.out_dir}: {len(found)} rejects")
     return OK

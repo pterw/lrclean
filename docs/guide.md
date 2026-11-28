@@ -121,7 +121,10 @@ again; see [Limits](#limits) for one example.
 4. **Reject check.** `catalogs`, then `rejects`. Read `out/rejects-summary.md`: the count per verdict, what each
    catalog rejected, and, as its last line, the SHA-256 of `out/reject-removal-list.csv`. `out/rejects.csv` gives
    every reject with its verdict and the evidence (`how_decided`). `rejects` selects rejects from the catalogs
-   and uses hashes only from complete library scans when looking for twins.
+   and uses hashes only from complete library scans when looking for twins. For a sidecar named after the full
+   photo name (`IMG_0001.ARW.xmp`), run `inventory` before `rejects` and check that the library scan is complete:
+   `rejects` finds such a sidecar, which no catalog records, only in the latest complete files scan. With a missing
+   or partial scan, or a sidecar added since the scan, an unrecorded sidecar can be left out of the list.
 5. **Pilot.** Pick a few rows (one with a sidecar, one with a twin if any). `stage <list> --approved-sha256 <hex>
    --only <source> ...` as a dry run, then with `--apply`. Open Lightroom: those photos show as missing. Close it,
    `undo <batch> --apply`, and check that nothing else changed. Opening Lightroom changes the catalogs, so run
@@ -177,7 +180,9 @@ the full text.
   - no catalog holds develop work or a pick for it, with one narrow exception: a byte-identical copy whose
     develop settings equal those of a twin that stays;
   - it exists, is not an online-only placeholder, and lies inside the backup;
-  - its sidecars pass the same tests, because a raw and its sidecars leave together or not at all;
+  - its sidecars pass the same tests, because a raw and its sidecars leave together or not at all (a sidecar is
+    `IMG_0001.xmp`, `IMG_0001.ARW.xmp` or the same names with `.acr`; `rejects` finds the whole-name ones in the
+    files scan);
   - every catalog that could record it was read.
 - **A copy leaves only when its twin stays.** A file on the copy list is recorded by no live or shoot catalog, has
   no sidecar, no pick and no develop work in any catalog read, and is byte-identical to a file the live catalog

@@ -525,10 +525,14 @@ role. No configuration key is added.
     (rule 5), no catalog keeps it (rule 26: develop work and picks included, except as rule 26a lifts develop work),
     it exists and is not a placeholder (R4), and it has a verified copy on every archive root (rule 27). Its
     sidecars are the sidecar records (`is_sidecar` 1, either path form) of each catalog that rejects the reject, in
-    the same folder with the same base name as the reject. A sidecar that does not exist is ignored. Each existing
-    sidecar must pass the same tests as the reject (not kept, rule 26 included, so no develop work or pick on the
-    sidecar's own path; not a placeholder; archive evidence), and one that fails holds the whole row with its
-    reason: a sidecar path that a catalog records as a photo it does not reject is kept. A raw and its sidecars
+    the same folder with the same base name as the reject. The base name of a sidecar named after the whole photo
+    name is the photo's (`IMG_0001.ARW.xmp` has the base name `IMG_0001`). Its sidecars also include the file
+    `<the reject's name>.xmp` or `.acr` of the latest complete files scan of the library roots, which no catalog
+    need record (its spelling is the files scan's); only that exact name is read from the files scan. A sidecar
+    that does not exist is ignored. Each existing sidecar must pass the same tests as the reject (not kept, rule
+    26 included, so no develop work or pick on the sidecar's own path; not a placeholder; archive evidence), and
+    one that fails holds the whole row with its reason: a sidecar path that a catalog records as a photo it does
+    not reject is kept. A raw and its sidecars
     leave together or not at all: a reject that is also an existing sidecar of a reject that is held, by any reason
     including this one, is held with it and takes its verdict. The hold is symmetric for a shared sidecar: when any
     reject is held, every reject whose existing sidecars include a path that the held reject also lists (the shared
@@ -569,9 +573,9 @@ role. No configuration key is added.
     `settings` gains when it is opened (`store.connect`, see the `image` paragraph). It reads the work database
     (the `catalog`, `record` and `image` tables and the latest `catalogs` scans), the configuration, the
     manifests, the verified lists, the `stat` of files and of each catalog source with its `-wal` and `.lock`, and
-    the listing of the catalog roots that rule 5 asks for. It reads `file` and `hash` rows only for rule 26a,
-    with the `stat` of each reject and of each path it tests as a twin; it opens no file or catalog. The listing
-    of rule 15 holds.
+    the listing of the catalog roots that rule 5 asks for. It reads `file` rows for the sidecar names of rule 29
+    and `file` and `hash` rows for rule 26a, with the `stat` of each reject and of each path it tests as a twin;
+    it opens no file or catalog. The listing of rule 15 holds.
 
 ### Verification
 
@@ -1074,8 +1078,9 @@ rule it could not reuse.
     (the records of rule 24, not its `keeps` alone; the copies of the live catalog in `old_states` keep nothing,
     R13). `work`: any catalog read, the catalogs in `old_states` included, has an image of it with a pick of 1,
     with develop work, or with a develop state that cannot be read (rule 26, second sentence; rule 26a is not
-    applied). `sidecar`: a file with extension `xmp` or `acr`, in its folder with its base name, is in the same
-    complete `files` scan or recorded as a sidecar by any catalog read (either form). `twin_rejected` (rule 46).
+    applied). `sidecar`: a file with extension `xmp` or `acr`, in its folder with its base name, or named after
+    its whole file name plus that extension, is in the same complete `files` scan or recorded as a sidecar by any
+    catalog read (either form). `twin_rejected` (rule 46).
     `changed`: its `stat` now differs from its `files` row (size, time, file index) or its file is gone.
     `no_archive_copy`: it lacks a verified copy on every archive root (rule 27, read by
     `reject_archive.archive_state` with that `stat`, all its states under this one name). Last, `no_keeper`: it
