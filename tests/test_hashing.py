@@ -5,7 +5,7 @@ import tempfile
 import unittest
 import unittest.mock
 
-from lrclean import hashing, paths, store
+from lrclean import backups, classify, hashing, paths, store
 
 
 class Fixture(unittest.TestCase):
@@ -156,8 +156,10 @@ class HashOneTest(Fixture):
             return type("S", (), {"st_file_attributes": 0x400000, "st_size": real.st_size,
                                   "st_mtime_ns": real.st_mtime_ns, "st_ino": real.st_ino})()
 
+        self.assertEqual(self.one(self.row_a), "hashed")
+        self.assertIsNotNone(self.hash_row(self.row_a))
         self.assertEqual(self.one(self.row_a, stat=stat), "skipped_placeholder")
-        self.assertEqual(self.opened, [])
+        self.assertEqual(self.opened, ["IMG_0001.ARW"])
         self.assertIsNone(self.hash_row(self.row_a))
 
     def test_replaced_file_with_same_size_and_mtime_is_changed_rule_9(self):
@@ -270,6 +272,55 @@ class HashFilesTest(Fixture):
         counts = self.run_all([lib])
         self.assertEqual((counts["sampled"], counts["skipped_placeholder"]), (1, 1))
         self.assertNotIn("P.ARW", self.opened)
+
+    def placeholder_stat(self, target):
+        """os.stat, but `target` reports the online-only placeholder attribute."""
+        def stat(path):
+            real = os.stat(path)
+            if paths.norm(path) != paths.norm(target):
+                return real
+            return type("S", (), {"st_file_attributes": 0x400000, "st_size": real.st_size,
+                                  "st_mtime_ns": real.st_mtime_ns, "st_ino": real.st_ino})()
+        return stat
+
+    def test_file_that_became_a_placeholder_loses_its_stored_hash_rule_7(self):
+        lib, (lib_row,) = self.root("lib", {"2020/IMG_0001.ARW": b"a" * 500})
+        bak, (bak_row,) = self.root("bak", {"x/IMG_0001.ARW": b"a" * 500})
+        self.assertNotEqual(lib_row["id"], bak_row["id"])
+
+        def year():
+            (row,) = [r for r in backups.external_copy_rows(
+                self.conn, photo_root=lib, group_depth=1, library_roots=[lib],
+                backup_roots=[bak]) if r["kind"] == "year"]
+            return row["copied_sampled"] + row["copied_verified"], row["no_copy"]
+
+        self.run_all([lib], [bak])
+        self.assertEqual(year(), (1, 0))
+        stat = self.placeholder_stat(bak_row["path_orig"])
+        attrs = [getattr(stat(paths.fs_path(r["path_orig"])), "st_file_attributes", 0)
+                 for r in (lib_row, bak_row)]
+        self.assertEqual([paths.is_placeholder(a) for a in attrs], [False, True])
+        counts = self.run_all([lib], [bak], stat=stat)
+        self.assertEqual(counts["skipped_placeholder"], 1)
+        self.assertEqual(year(), (0, 1))
+
+        with self.subTest("twin of the same kind and size"):
+            twin_lib, (one, two) = self.root(
+                "twins", {"IMG_0002.ARW": b"b" * 700, "IMG_0003.ARW": b"b" * 700})
+            self.assertNotEqual(one["id"], two["id"])
+
+            def classes():
+                found = classify.verdicts(self.conn, library_roots=[twin_lib], catalog_roots=[],
+                                          excluded_catalogs=[])
+                return {v.file_id: (v.klass, v.how_decided) for v in found}
+
+            self.run_all([twin_lib])
+            self.assertEqual({k for k, _ in classes().values()}, {"needs_eye_no_recorded"})
+            self.run_all([twin_lib], stat=self.placeholder_stat(two["path_orig"]))
+            self.assertEqual(classes(), {
+                one["id"]: ("not_compared",
+                            "1 other file(s) of the same size have no usable hash"),
+                two["id"]: ("not_compared", "no valid sample hash")})
 
     def test_second_run_reuses_everything_rule_9(self):
         lib, _ = self.root("lib", {"1.ARW": b"a" * 50, "2.ARW": b"b" * 60})

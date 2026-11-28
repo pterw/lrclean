@@ -148,8 +148,9 @@ Each rule gets one test that names it.
 7. **Placeholders.** A file with attribute `0x1000`, `0x40000` or `0x400000` is listed and never opened.
 8. **Identical** means same size and same full SHA-256. A sample hash (size, first 64 KB, last 64 KB) only
    filters. Same size alone means nothing: uncompressed raws from one camera share a size.
-9. **Hash rows are an optimisation.** A row is stale when the file's index, size or time no longer match. Nothing
-   in phase A treats a stored hash as proof for a later move. On a library root every photo file is sampled, and
+9. **Hash rows are an optimisation.** A row is stale when the file's index, size or time no longer match. A file
+   found to be an online-only placeholder when it is hashed again loses its row, so a backup copy that became a
+   placeholder no longer counts as copied. Nothing in phase A treats a stored hash as proof for a later move. On a library root every photo file is sampled, and
    files that collide with another library file on size and sample are hashed in full. On a backup root a file is
    sampled only when its size equals that of some library photo file, and is hashed in full only by `verify`.
 10. **Same file, two names.** Two paths with the same volume and file index are one file. They are reported as

@@ -8,6 +8,8 @@
 - `backup-run`: a destination that became an online-only placeholder after it was verified is `dest_placeholder` in
   the dry run (exit 0, as for every dry run) and with `--apply` (exit 6), no longer `already_verified` or `verified`
   (#24).
+- Section 5 of the report no longer counts a backup copy that became an online-only placeholder as copied, and
+  `verify` no longer selects it from an old sample; its stored hash is removed when `hash` finds it (#24).
 
 ## 0.1.1 - 2026-11-27
 
