@@ -38,6 +38,8 @@ def check_manifest(
     exists=os.path.exists,
 ) -> int:
     n = backup_plan.archive_index(rows, archive_roots)
+    real_root = os.path.realpath(archive_roots[n - 1])
+    real_libraries = [os.path.realpath(library) for library in library_roots]
     seen: set[str] = set()
     needed = 0
     for row in rows:
@@ -50,7 +52,7 @@ def check_manifest(
         if paths.name_units(name + PART_SUFFIX) > paths.NAME_LIMIT:
             raise ManifestError(f"dest name too long for its part file: {row.dest} (source {row.source})")
         folder = _real_folder(row.dest)
-        if not backup_plan.is_inside(folder, os.path.realpath(archive_roots[n - 1])) or any(backup_plan.is_inside(folder, os.path.realpath(library)) for library in library_roots):
+        if not backup_plan.is_inside(folder, real_root) or any(backup_plan.is_inside(folder, library) for library in real_libraries):
             raise ManifestError(f"dest leads through a link out of its archive root or into a library root: {row.dest} (resolves to {folder})")
         if row.bytes < 0:
             raise ManifestError(f"negative size for {row.dest}")
