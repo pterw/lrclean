@@ -228,6 +228,18 @@ class SidecarHoldTest(unittest.TestCase):
         self.assertEqual(verdict_of(world, views).verdict, "on_list")
         views[1] = view("C:/cats/b.lrcat", photos=[SIDE])
         self.assertEqual(verdict_of(world, views).verdict, "kept")
+        with self.subTest("the kept photo is named after the reject's whole name"):
+            kept_photo, side = f"{P}.arw", f"{P}.xmp"
+            self.assertNotEqual(P, kept_photo)
+            self.assertEqual(os.path.splitext(os.path.basename(side))[0],
+                             os.path.splitext(os.path.basename(kept_photo))[0])
+            world = World()
+            for path in (P, kept_photo, side):
+                world.clean(path)
+            one = view(picks={P: [-1], kept_photo: [0]}, sidecars=[side])
+            rows = world.decide([one])
+            self.assertEqual(rows[P].verdict, "kept")
+            self.assertEqual([r for r in rows.values() if r.verdict == "on_list"], [])
 
     def test_a_sidecar_only_the_second_rejecting_view_records_holds_by_its_own_spelling(self):
         world = World()

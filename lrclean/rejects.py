@@ -108,18 +108,21 @@ def is_rejected(view: CatalogView, path_norm: str) -> bool:
     return all(pick == -1 for pick in picks)
 
 
-def _key(path_norm: str) -> tuple[str, str]:
+def _keys(path_norm: str) -> tuple[tuple[str, str], ...]:
+    """The plain key `(folder, stem)`; a sidecar named after a whole photo name also gets the photo's key."""
     folder, name = paths.split_path(path_norm)
     stem, ext = os.path.splitext(name)
+    keys = ((folder, stem),)
     if ext[1:] in paths.SIDECAR_EXTS and os.path.splitext(stem)[1][1:] in paths.PHOTO_EXTS:
-        stem = os.path.splitext(stem)[0]
-    return folder, stem
+        keys += ((folder, os.path.splitext(stem)[0]),)
+    return keys
 
 
 def base_index(names) -> dict[tuple[str, str], list[str]]:
     index: dict[tuple[str, str], list[str]] = {}
     for name in names:
-        index.setdefault(_key(name), []).append(name)
+        for key in _keys(name):
+            index.setdefault(key, []).append(name)
     return index
 
 
@@ -131,7 +134,7 @@ def is_kept(view: CatalogView, path_norm: str, index=None) -> bool:
     if path_norm not in view.sidecars:
         return False
     index = base_index(view.photos) if index is None else index
-    return any(not is_rejected(view, photo) for photo in index.get(_key(path_norm), ()))
+    return any(not is_rejected(view, photo) for key in _keys(path_norm) for photo in index.get(key, ()))
 
 
 def work_of(view: CatalogView, path_norm: str) -> str:
@@ -179,13 +182,13 @@ def relative_only_flags(views) -> list[tuple[str, int]]:
 def sidecars_of(views, path_norm: str, indexes=None, *,
                 files_sidecars: Mapping[str, str] = MappingProxyType({})) -> dict[str, str]:
     """The rejecting views' recorded sidecars of `path_norm`, then the files scan's `<path_norm>.xmp`/`.acr`."""
-    key = _key(path_norm)
+    keys = _keys(path_norm)
     out: dict[str, str] = {}
     for view in views:
         if not is_rejected(view, path_norm):
             continue
         index = indexes[view.source] if indexes else base_index(view.sidecars)
-        for side in index.get(key, ()):
+        for side in (s for key in keys for s in index.get(key, ())):
             if side != path_norm:
                 out.setdefault(side, view.orig.get(side, side))
         for side in (f"{path_norm}.xmp", f"{path_norm}.acr"):

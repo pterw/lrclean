@@ -98,6 +98,13 @@ class KeptTest(unittest.TestCase):
         self.assertFalse(is_kept(view(picks={P: [-1]}, sidecars=[double]), double))
         self.assertTrue(is_kept(view(picks={P: [-1], "d:/lib/shoot-a/img_0001.jpg": [0]}, sidecars=[double]), double))
 
+    def test_sidecar_named_after_the_whole_photo_name_is_kept_by_either_photo_it_names(self):
+        double, longer = P + ".xmp", P + ".arw"
+        self.assertNotEqual(longer, P)
+        for kept, rejected in ((longer, P), (P, longer)):
+            with self.subTest(kept=kept):
+                self.assertTrue(is_kept(view(picks={kept: [0], rejected: [-1]}, sidecars=[double]), double))
+
     def test_sidecar_of_another_base_or_folder_does_not_keep(self):
         for name, photo in (("base", OTHER), ("folder", "d:/lib/shoot-b/img_0001.arw")):
             with self.subTest(name):
@@ -222,7 +229,9 @@ class SidecarsTest(unittest.TestCase):
                  "first-part photo, dotted sidecar": (short, "d:/lib/shoot-a/shoot.2019.xmp", {}),
                  "dotted photo, its own sidecar": (dotted, "d:/lib/shoot-a/shoot.2019.xmp",
                                                    {"d:/lib/shoot-a/shoot.2019.xmp": "d:/lib/shoot-a/shoot.2019.xmp"}),
-                 "photo-named jpeg is no sidecar of the raw": (P, P + ".jpg", {})}
+                 "photo-named jpeg is no sidecar of the raw": (P, P + ".jpg", {}),
+                 "photo named with a photo extension, its base-name sidecar": (P + ".arw", P + ".xmp", {P + ".xmp": P + ".xmp"}),
+                 "photo, the sidecar named after its whole name": (P, P + ".xmp", {P + ".xmp": P + ".xmp"})}
         for name, (photo, side, want) in cases.items():
             with self.subTest(name):
                 self.assertNotEqual(photo, side)

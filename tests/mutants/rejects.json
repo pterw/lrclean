@@ -23,6 +23,8 @@
     {"name": "the twin stays test (shoot record and live developed 1) ignored", "edits": [{"file": "lrclean/rejects.py", "old": "return any(v.role == \"shoot\" and twin_norm in v.absolute for v in reads) and any(v.role == \"live\" and (1, settings) in v.absolute_settings.get(twin_norm, ()) for v in reads)", "new": "return True"}]},
     {"name": "the reject's no-shoot-record test ignored", "edits": [{"file": "lrclean/rejects.py", "old": "if any(v.role == \"shoot\" and (path_norm in v.photos or path_norm in v.sidecars) for v in reads):", "new": "if False:"}]},
     {"name": "settings compared in the live catalog only, not in every catalog read", "edits": [{"file": "lrclean/rejects.py", "old": "held = {(d, s or None) for v in reads for d, s in _develop_pairs(v, path_norm) if d is None or d == 1}", "new": "held = {(d, s or None) for v in reads if v.role == \"live\" for d, s in _develop_pairs(v, path_norm) if d is None or d == 1}"}]},
-    {"name": "double-extension sidecar strip dropped", "edits": [{"file": "lrclean/rejects.py", "old": "if ext[1:] in paths.SIDECAR_EXTS and os.path.splitext(stem)[1][1:] in paths.PHOTO_EXTS:", "new": "if False:"}]}
+    {"name": "double-extension sidecar strip dropped", "edits": [{"file": "lrclean/rejects.py", "old": "if ext[1:] in paths.SIDECAR_EXTS and os.path.splitext(stem)[1][1:] in paths.PHOTO_EXTS:", "new": "if False:"}]},
+    {"name": "whole-name sidecar loses its plain key", "edits": [{"file": "lrclean/rejects.py", "old": "keys += ((folder, os.path.splitext(stem)[0]),)", "new": "keys = ((folder, os.path.splitext(stem)[0]),)"}]},
+    {"name": "kept looks at one key only", "edits": [{"file": "lrclean/rejects.py", "old": "return any(not is_rejected(view, photo) for key in _keys(path_norm) for photo in index.get(key, ()))", "new": "return any(not is_rejected(view, photo) for key in _keys(path_norm)[-1:] for photo in index.get(key, ()))"}]}
   ]
 }

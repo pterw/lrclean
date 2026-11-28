@@ -176,6 +176,8 @@ CASES = [  # (name, setup(scene), held reasons beside the base's one `recorded` 
     ("sidecar on disk, acr", lambda s: (s.add(X), s.row("C:/lib/shoot-x/IMG_0001.ACR")), {"sidecar": 1}),
     ("sidecar on disk, double extension", lambda s: (s.add(X), s.row("C:/lib/shoot-x/IMG_0001.ARW.XMP")),
      {"sidecar": 1}),
+    ("sidecar on disk, a photo named with a photo extension",
+     lambda s: (s.add(X + ".ARW"), s.row("C:/lib/shoot-x/IMG_0001.ARW.xmp")), {"sidecar": 1}),
     ("sidecar only in a catalog", lambda s: (s.add(X), s.cat("old_state", sidecars=[N("C:/lib/shoot-x/IMG_0001.xmp")])),
      {"sidecar": 1}),
     ("twin_rejected alone", lambda s: _twin_rejected(s, "alone"), {"twin_rejected": 1, "recorded": 1}),

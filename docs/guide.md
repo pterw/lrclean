@@ -182,7 +182,8 @@ the full text.
   - it exists, is not an online-only placeholder, and lies inside the backup;
   - its sidecars pass the same tests, because a raw and its sidecars leave together or not at all (a sidecar is
     `IMG_0001.xmp`, `IMG_0001.ARW.xmp` or the same names with `.acr`; `rejects` finds the whole-name ones in the
-    files scan);
+    files scan; `IMG_0001.ARW.xmp` also belongs to a photo named `IMG_0001.ARW.ARW`, and stays when either photo
+    is kept);
   - every catalog that could record it was read.
 - **A copy leaves only when its twin stays.** A file on the copy list is recorded by no live or shoot catalog, has
   no sidecar, no pick and no develop work in any catalog read, and is byte-identical to a file the live catalog

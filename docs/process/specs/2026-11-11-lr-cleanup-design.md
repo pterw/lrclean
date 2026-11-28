@@ -528,8 +528,9 @@ role. No configuration key is added.
     (rule 5), no catalog keeps it (rule 26: develop work and picks included, except as rule 26a lifts develop work),
     it exists and is not a placeholder (R4), and it has a verified copy on every archive root (rule 27). Its
     sidecars are the sidecar records (`is_sidecar` 1, either path form) of each catalog that rejects the reject, in
-    the same folder with the same base name as the reject. The base name of a sidecar named after the whole photo
-    name is the photo's (`IMG_0001.ARW.xmp` has the base name `IMG_0001`). Its sidecars also include the file
+    the same folder with the same base name as the reject. A sidecar named after a whole photo name has two base
+    names, its own and the photo's (`IMG_0001.ARW.xmp` has the base names `IMG_0001.ARW` and `IMG_0001`), so it is
+    a sidecar of both photos and is kept when either is kept. Its sidecars also include the file
     `<the reject's name>.xmp` or `.acr` of the latest complete files scan of the library roots, which no catalog
     need record (its spelling is the files scan's); only that exact name is read from the files scan. A sidecar
     that does not exist is ignored. Each existing sidecar must pass the same tests as the reject (not kept, rule
