@@ -294,10 +294,12 @@ class OrderTests(CliCase):
 
     def test_catalog_scan_reraises_an_unrelated_runtime_error(self):
         failure = RuntimeError("boom")
-        processes = mock.Mock(side_effect=[["explorer.exe"], failure])
-        with self.assertRaises(RuntimeError) as caught:
-            self.run_cli("catalogs", processes=processes)
-        self.assertIs(caught.exception, failure)
+        for call, side_effect in (("first", [failure]), ("second", [["explorer.exe"], failure])):
+            with self.subTest(call=call):
+                processes = mock.Mock(side_effect=side_effect)
+                with self.assertRaises(RuntimeError) as caught:
+                    self.run_cli("catalogs", processes=processes)
+                self.assertIs(caught.exception, failure)
 
     def test_steps_out_of_order_exit_with_a_message(self):
         cases = ((("inventory",), "run catalogs first"), (("hash",), "run inventory first"),
