@@ -16,6 +16,8 @@
   (`family_incomplete`, exit 6) instead of dropping it with exit 0 (#33).
 - `backup-run` refuses a manifest whose destination file name is 243 or more UTF-16 units, naming the file,
   instead of failing that row at every copy (#18).
+- `backup-run` refuses a manifest whose destination lies below a junction or link inside an archive root that leads
+  into a library root or out of the archive root, instead of writing the copy there (rule 17).
 
 ## 0.1.1 - 2026-11-27
 

@@ -3,6 +3,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import threading
 import time
@@ -10,7 +11,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from lrclean import hashing, paths
+from lrclean import backup_plan, hashing, paths
 from lrclean.backup import (
     PART_SUFFIX,
     Journal,
@@ -122,6 +123,54 @@ class CheckManifestTest(unittest.TestCase):
         rows = [self._row(os.path.join(self.lib, "shoot-a", "copy.ARW"))]
         with self.assertRaises(ManifestError):
             self._check(rows, archive_roots=[self.top])
+        # A link in the library leading out of it: only the path text puts this dest in the library.
+        self._junction(os.path.join(self.lib, "jarc"), self.arc)
+        dest = os.path.join(self.lib, "jarc", "IMG_0002.ARW")
+        self.assertTrue(backup_plan.is_inside(dest, self.lib))
+        self.assertFalse(backup_plan.is_inside(os.path.realpath(os.path.dirname(dest)), self.lib))
+        with self.assertRaises(ManifestError):
+            self._check([self._row(dest)], archive_roots=[self.top])
+
+    def _junction(self, link, target):
+        made = subprocess.run(["cmd", "/c", "mklink", "/J", link, target], capture_output=True, text=True)
+        self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+        self.addCleanup(os.rmdir, link)  # the link only, never the target
+
+    def test_rule17_dest_below_a_link_into_the_library_is_refused_and_nothing_is_written(self):
+        self._junction(os.path.join(self.arc, "jlib"), self.lib)
+        dest = os.path.join(self.arc, "jlib", "shoot-a", "IMG_0001.ARW")
+        self.assertFalse(backup_plan.is_inside(dest, self.lib))  # the path text alone passes
+        lib_before, arc_before = _listing(self.lib), _listing(self.arc)
+        with self.assertRaises(ManifestError) as caught:
+            self._check([self._row(dest)])
+        self.assertIn(dest, str(caught.exception))
+        self.assertEqual((_listing(self.lib), _listing(self.arc)), (lib_before, arc_before))
+
+    def test_rule17_dest_below_a_link_is_refused_only_when_it_leads_out_of_the_archive_root(self):
+        long_folder = os.path.join(self.arc, "shoot-long", *["d" * 50] * 5)
+        os.makedirs(paths.fs_path(long_folder))
+        long_dest = os.path.join(long_folder, "IMG_0004.ARW")
+        cases = {
+            "link to a folder in the archive root": ("real", "jreal", False),
+            "link to a folder outside both roots": (os.path.join("..", "elsewhere"), "jout", True),
+            "ordinary folder": (None, "shoot-a", False),
+        }
+        for name, (target, folder, refused) in cases.items():
+            with self.subTest(name):
+                if target is not None:
+                    real = os.path.normpath(os.path.join(self.arc, target))
+                    os.makedirs(real)
+                    self._junction(os.path.join(self.arc, folder), real)
+                dest = os.path.join(self.arc, folder, "IMG_0001.ARW")
+                if refused:
+                    with self.assertRaises(ManifestError) as caught:
+                        self._check([self._row(dest)])
+                    self.assertIn(dest, str(caught.exception))
+                else:
+                    self.assertEqual(self._check([self._row(dest)]), 1)
+        with self.subTest("existing folder over 260 characters"):
+            self.assertGreater(len(long_dest), 260)
+            self.assertEqual(self._check([self._row(long_dest)]), 1)
 
     def test_rule16_free_space_boundary_equal_passes_one_above_raises(self):
         rows = [

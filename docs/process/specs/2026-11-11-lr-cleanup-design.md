@@ -307,10 +307,15 @@ Each rule gets one test that names it.
     destination. It also refuses a `dest` whose last component plus `.lrclean-part` is longer than 255 UTF-16 code
     units (a name of 243 units or more; a character outside the Basic Multilingual Plane counts 2): the part file
     of rule 19 could not be created. The planner still lists every file but a catalog file (a folder is copied
-    whole), so such a file must be renamed in the library before its manifest can run.
+    whole), so such a file must be renamed in the library before its manifest can run. `backup-run` also refuses
+    a `dest` whose folder, with links resolved (a junction or a symbolic link followed in the part of the path
+    that exists), is not inside its archive root or is inside a library root, both also with links resolved: the
+    copy would be written where the link leads.
 17. **Sources are read-only.** A source is opened for reading and nothing under a library root is created,
     changed, renamed or removed. The before-and-after listing of rule 15 holds for a backup run under the photo
-    root; outside it, see Verification.
+    root; outside it, see Verification. This holds through links present when the manifest is checked: a
+    junction inside an archive root that leads into a library root is refused by rule 16, and nothing is created
+    there. A link made after that check is not seen.
     `backup-verify` refuses, before it reads anything, when the report it would write is a `source` or a `dest`
     of the manifest.
 18. **Never overwrite.** When `dest` exists, both files are hashed in full: identical is `already_there`,

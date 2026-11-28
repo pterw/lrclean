@@ -49,6 +49,9 @@ def check_manifest(
             raise ManifestError(f"dest has the name of a part file: {row.dest} (source {row.source})")
         if paths.name_units(name + PART_SUFFIX) > paths.NAME_LIMIT:
             raise ManifestError(f"dest name too long for its part file: {row.dest} (source {row.source})")
+        folder = _real_folder(row.dest)
+        if not backup_plan.is_inside(folder, os.path.realpath(archive_roots[n - 1])) or any(backup_plan.is_inside(folder, os.path.realpath(library)) for library in library_roots):
+            raise ManifestError(f"dest leads through a link out of its archive root or into a library root: {row.dest} (resolves to {folder})")
         if row.bytes < 0:
             raise ManifestError(f"negative size for {row.dest}")
         key = paths.norm(os.path.normpath(row.dest))
@@ -60,6 +63,15 @@ def check_manifest(
     if needed > free_bytes(archive_roots[n - 1]):
         raise ManifestError(f"the manifest needs {needed} bytes, more than the free space")
     return n
+
+
+def _real_folder(dest: str) -> str:
+    """The folder of `dest` with junctions and links resolved (rule 17).
+
+    Non-strict `realpath` resolves the part that exists and keeps the rest,
+    so a folder `backup-run` creates later still counts as below its root.
+    """
+    return os.path.realpath(paths.fs_path(os.path.dirname(os.path.normpath(dest))))
 
 
 def source_changed(row: Row, *, stat=os.stat, attrs_of=None) -> bool:

@@ -13,6 +13,7 @@
     {"name": "destination placeholder test dropped", "edits": [{"file": "lrclean/backup.py", "old": "return paths.is_placeholder(attrs_of(row.dest, st) if attrs_of else getattr(st, \"st_file_attributes\", 0))", "new": "return False"}]},
     {"name": "journal skip applies to a placeholder destination", "edits": [{"file": "lrclean/backup.py", "old": "if recorded[:2] == (st.st_size, st.st_mtime_ns) and not _dest_placeholder(row, st, attrs_of) and not source_changed(row, stat=stat, attrs_of=attrs_of):", "new": "if recorded[:2] == (st.st_size, st.st_mtime_ns) and not source_changed(row, stat=stat, attrs_of=attrs_of):"}]},
     {"name": "dry run says already_verified for a placeholder destination", "edits": [{"file": "lrclean/backup.py", "old": "return \"dest_placeholder\" if _dest_placeholder(row, st, attrs_of) else \"already_verified\" if same else \"dest_exists\"", "new": "return \"already_verified\" if same else \"dest_placeholder\" if _dest_placeholder(row, st, attrs_of) else \"dest_exists\""}]},
-    {"name": "part file name over the limit accepted", "edits": [{"file": "lrclean/backup.py", "old": "if paths.name_units(name + PART_SUFFIX) > paths.NAME_LIMIT:", "new": "if False:"}]}
+    {"name": "part file name over the limit accepted", "edits": [{"file": "lrclean/backup.py", "old": "if paths.name_units(name + PART_SUFFIX) > paths.NAME_LIMIT:", "new": "if False:"}]},
+    {"name": "link out of the archive root accepted", "edits": [{"file": "lrclean/backup.py", "old": "if not backup_plan.is_inside(folder, os.path.realpath(archive_roots[n - 1])) or any(backup_plan.is_inside(folder, os.path.realpath(library)) for library in library_roots):", "new": "if False:"}]}
   ]
 }
