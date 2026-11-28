@@ -151,8 +151,12 @@ class CheckManifestTest(unittest.TestCase):
         os.makedirs(paths.fs_path(long_folder))
         long_dest = os.path.join(long_folder, "IMG_0004.ARW")
         jlib, jout = os.path.join(self.top, "arc-jlib"), os.path.join(self.top, "arc-jout")
+        lib_link = os.path.join(self.top, "lib-link")
+        self._junction(lib_link, self.lib)
+        self.assertNotEqual(norm(lib_link), norm(self.lib))
         # Each row: (junction target or None, folder holding the dest, archive root or None for arc-1, refused).
         cases = {
+            "library root is a link to the library": (self.lib, os.path.join(self.arc, "jlib2"), self.top, True),
             "link to a folder in the archive root": (os.path.join(self.arc, "real"), os.path.join(self.arc, "jreal"), None, False),
             "link to a folder outside both roots": (os.path.join(self.top, "elsewhere"), os.path.join(self.arc, "jout"), None, True),
             "ordinary folder": (None, os.path.join(self.arc, "shoot-a"), None, False),
@@ -166,14 +170,16 @@ class CheckManifestTest(unittest.TestCase):
                     self._junction(folder, target)
                 dest = os.path.join(folder, "IMG_0001.ARW")
                 roots = [root] if root else None
+                libraries = [lib_link] if name == "library root is a link to the library" else None
                 # Only the resolved folder can decide: the path text of the dest is outside the library.
                 self.assertFalse(backup_plan.is_inside(dest, self.lib))
+                self.assertFalse(backup_plan.is_inside(dest, lib_link))
                 if refused:
                     with self.assertRaises(ManifestError) as caught:
-                        self._check([self._row(dest)], archive_roots=roots)
+                        self._check([self._row(dest)], archive_roots=roots, library_roots=libraries)
                     self.assertIn(dest, str(caught.exception))
                 else:
-                    self.assertEqual(self._check([self._row(dest)], archive_roots=roots), 1)
+                    self.assertEqual(self._check([self._row(dest)], archive_roots=roots, library_roots=libraries), 1)
         with self.subTest("existing folder over 260 characters"):
             self.assertGreater(len(long_dest), 260)
             self.assertEqual(self._check([self._row(long_dest)]), 1)
