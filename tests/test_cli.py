@@ -245,6 +245,7 @@ class OrderTests(CliCase):
                 if opens:
                     self.assertIn("lrclean.sqlite", os.listdir(self.cats))
                 else:
+                    self.assertIn("is a link", err)
                     self.assertEqual(sorted(os.listdir(self.cats)), names)
 
     def test_a_link_at_work_or_its_snapshot_folders_stops_catalogs_and_the_original_is_untouched_rule_6(self):
