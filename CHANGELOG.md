@@ -25,6 +25,8 @@
   catalog is now SQLite's own. A catalog whose file name has 248 to 255 units is still not read on Windows with
   SQLite 3.49 (it cannot open the copy), and, being `unreadable`, it limits coverage. `catalogs` checks that
   Lightroom is not running before it reads a `-wal` file.
+- `backup-run`: a destination that already holds the same content but another modification time gets the
+  source's time; if that cannot be set, the row stays `already_there` and one line names the file (#12).
 
 ## 0.1.1 - 2026-11-27
 

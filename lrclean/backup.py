@@ -161,11 +161,19 @@ def _copy(row, part, tick, stat, attrs_of, open_, writer, rename, utime) -> tupl
     if source_changed(row, stat=stat, attrs_of=attrs_of):
         return CHANGED, ""
     if os.path.exists(paths.fs_path(row.dest)):
-        if _dest_placeholder(row, stat(paths.fs_path(row.dest)), attrs_of):
+        dest_st = stat(paths.fs_path(row.dest))
+        if _dest_placeholder(row, dest_st, attrs_of):
             return DEST_PLACEHOLDER, ""
         src_sha = hashing.full_hash(row.source, open_)
         dest_sha = hashing.full_hash(row.dest, open_)
-        return (ALREADY_THERE if src_sha == dest_sha else CONFLICT), src_sha
+        if src_sha != dest_sha:
+            return CONFLICT, src_sha
+        if dest_st.st_mtime_ns != row.mtime_ns:
+            try:
+                utime(paths.fs_path(row.dest), ns=(row.mtime_ns, row.mtime_ns))
+            except OSError as exc:
+                print(f"the modification time of {row.dest} could not be set: {exc}", file=sys.stderr)
+        return ALREADY_THERE, src_sha
     os.makedirs(paths.fs_path(os.path.dirname(row.dest)), exist_ok=True)
     digest = hashlib.sha256()
     with open_(row.source) as source, writer(part) as out:

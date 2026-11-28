@@ -419,10 +419,15 @@ class CopyRowTest(unittest.TestCase):
 
     def test_rule18_existing_identical_dest_is_already_there(self):
         row = self._row(dest_data=b"abcde" * 50)
-        before = _tree(self.arc)
+        wrong = row.mtime_ns + 5_000_000_000
+        os.utime(row.dest, ns=(wrong, wrong))
+        self.assertNotEqual(os.stat(row.dest).st_mtime_ns, row.mtime_ns)
+        [(_path, size, _mtime, digest)] = _tree(self.arc)
         state, sha = copy_row(row)
         self.assertEqual((state, sha), ("already_there", _digest(row.source)))
-        self.assertEqual(_tree(self.arc), before)
+        [(_path, size_after, mtime_after, digest_after)] = _tree(self.arc)
+        self.assertEqual((size_after, digest_after), (size, digest))
+        self.assertEqual(mtime_after, row.mtime_ns)
         self.assertEqual(_parts(self.arc), [])
 
     def test_rule18_existing_different_dest_is_conflict_and_untouched(self):
@@ -436,6 +441,9 @@ class CopyRowTest(unittest.TestCase):
         for name, (data, dest_data) in cases.items():
             with self.subTest(name):
                 row = self._row(data, name=name, dest_data=dest_data)
+                wrong = row.mtime_ns + 5_000_000_000
+                os.utime(row.dest, ns=(wrong, wrong))
+                self.assertNotEqual(os.stat(row.dest).st_mtime_ns, row.mtime_ns)
                 before = _tree(self.arc)
                 self.assertEqual(copy_row(row)[0], "conflict")
                 self.assertEqual(_tree(self.arc), before)
@@ -573,7 +581,27 @@ class CopyRowTest(unittest.TestCase):
         self.assertEqual(copy_row(row, utime=mock.Mock(side_effect=OSError))[0], "failed")
         self.assertEqual(_digest(row.dest), _digest(row.source))
         self.assertEqual(_parts(self.arc), [])
+        wrong = row.mtime_ns + 5_000_000_000
+        os.utime(row.dest, ns=(wrong, wrong))
+        self.assertNotEqual(os.stat(row.dest).st_mtime_ns, row.mtime_ns)
         self.assertEqual(copy_row(row)[0], "already_there")
+        self.assertEqual(os.stat(row.dest).st_mtime_ns, row.mtime_ns)
+
+    def test_rule18_a_utime_that_fails_once_keeps_already_there_and_the_next_run_sets_the_time(self):
+        row = self._row(dest_data=b"abcde" * 50)
+        wrong = row.mtime_ns + 5_000_000_000
+        os.utime(row.dest, ns=(wrong, wrong))
+        self.assertNotEqual(wrong, row.mtime_ns)
+        with mock.patch("sys.stderr", io.StringIO()) as err:
+            self.assertEqual(copy_row(row, utime=mock.Mock(side_effect=OSError("denied")))[0], "already_there")
+        self.assertIn(row.dest, err.getvalue())
+        self.assertIn("denied", err.getvalue())
+        self.assertEqual(os.stat(row.dest).st_mtime_ns, wrong)
+        self.assertEqual(copy_row(row)[0], "already_there")
+        self.assertEqual(os.stat(row.dest).st_mtime_ns, row.mtime_ns)
+        unused = mock.Mock()
+        self.assertEqual(copy_row(row, utime=unused)[0], "already_there")
+        unused.assert_not_called()
 
     def test_b15_a_tick_follows_every_block_read_and_brackets_the_fsync(self):
         row = self._row(bytes(range(256)) * (3 * MIB // 256), dest_data=bytes(3 * MIB))

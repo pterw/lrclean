@@ -327,15 +327,18 @@ Each rule gets one test that names it.
     `backup-verify` refuses, before it reads anything, when the report it would write is a `source` or a `dest`
     of the manifest.
 18. **Never overwrite.** When `dest` exists, both files are hashed in full: identical is `already_there`,
-    different is `conflict`, and the destination is left as it was in both cases. A destination that is an
+    different is `conflict`. A conflicting destination is left as it was. An identical one is given the source's
+    modification time when its own differs (rule 19); when that time cannot be set the row is still
+    `already_there` and one line naming the destination goes to stderr. A destination that is an
     online-only placeholder (rule 7) is never opened: the row is `dest_placeholder`, the destination is left
     as it was, and the dry run says `dest_placeholder`. This holds also for a row the journal records as verified:
     the placeholder test comes before the journal skip.
 19. **A copy is verified by content.** The file is written to `<dest>.lrclean-part` in the destination folder
     while the source is hashed, then flushed to disk and closed; the part file is read again in full and its
     SHA-256 must equal the source's; the source's size and time must still equal the manifest's; only then is
-    the part file renamed to `dest` (a rename that cannot replace a file) and given the source's time. A
-    mismatch removes the part file and the row is `failed`.
+    the part file renamed to `dest` (a rename that cannot replace a file) and given the source's time. If that
+    time cannot be set the row is `failed`, and the next run finds the destination identical and sets it (rule
+    18). A mismatch removes the part file and the row is `failed`.
 20. **Changed sources are not copied.** A source that is gone, is now a placeholder, or whose size or time
     differs from the manifest is `changed`, and nothing is written for it.
 21. **Journal.** `work/journal/backup-<n>-<started>.jsonl` gets one line before a copy starts and one when it
@@ -360,7 +363,7 @@ Each rule gets one test that names it.
   file beside photos (never a row), a preview cache (not entered), a storage container and an unknown container
   (walked), a folder in `exclude` and an archive root (not entered), a junction (not followed, counted), a folder
   that cannot be listed (named as not read), a nested photo folder (selected by itself), and a replan of a tree
-  already backed up (every row `already_there` or skipped by the journal, nothing written).
+  already backed up (every row `already_there` or skipped by the journal, no file content written).
 - The copy engine decides "verified", so it ships a planted-defect gate (`tests/mutants/backup.json`).
 - A reviewer runs the three subcommands end to end on a synthetic tree before the real one.
 - The real run is the controller's, from a manifest the owner approved: one small folder to each archive root
