@@ -1,0 +1,51 @@
+name: Bug report
+description: A command did something it should not, or did not do what the guide says.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste real file, folder, catalog, drive or client names: issues are public. Replace them with
+        synthetic names such as `shoot-a` and `IMG_0001.ARW`, keeping the shape that matters (length, a trailing
+        space, a junction, a network path).
+  - type: input
+    id: version
+    attributes:
+      label: lrclean version
+      description: The output of `python -m pip show lrclean` (the Version line), or the commit you run from.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Python and Windows versions
+      placeholder: Python 3.13.1, Windows 11 24H2
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and exit code
+      description: The command you ran and its exit code (see "Exit codes" in docs/guide.md).
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Name the design rule or the guide section that says so, if you know it.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: The output, with names replaced as above.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The smallest folder tree and config that shows it, with synthetic names.
