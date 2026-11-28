@@ -10,6 +10,8 @@
   (#24).
 - Section 5 of the report no longer counts a backup copy that became an online-only placeholder as copied, and
   `verify` no longer selects it from an old sample; its stored hash is removed when `hash` finds it (#24).
+- `verify` counts each corrupted copy as a mismatch, also when another copy of the file is exact, and section 5 of
+  `summary.md` totals the library's raws and the backup-only raws apart (#28).
 
 ## 0.1.1 - 2026-11-27
 

@@ -109,7 +109,8 @@ again; see [Limits](#limits) for one example.
 
 1. **Report.** `catalogs`, `inventory`, `hash`, `report`. Read `out/summary.md` first: it opens with what could and
    could not be read. Nothing outside the tool folder is changed by this phase. `hash`, `verify` and the report's
-   verdicts skip file rows from partial scans.
+   verdicts skip file rows from partial scans. `verify` prints `mismatch` once for each backup copy that differs
+   from its file, so a file with an exact and a corrupted copy counts in `verified` and in `mismatch`.
 2. **Backup.** `backup-plan`, then read each manifest and approve it by reading it: `backup-run` refuses a manifest
    that breaks its rules but takes no SHA-256 of it. `backup-run <manifest>` as a dry run, then with `--apply`;
    then `backup-verify <manifest>`. A rerun copies only what is missing. Planning needs at least one complete

@@ -80,7 +80,7 @@ def _bytes(row: Mapping, column: str = "bytes") -> int:
     return int(value)
 
 
-def _by_folder(rows: Sequence[Mapping]) -> list[str]:
+def _by_folder(rows: Sequence[Mapping], title: str) -> list[str]:
     totals: dict[str, int] = {}
     spelling: dict[str, str] = {}
     for row in rows:
@@ -88,16 +88,20 @@ def _by_folder(rows: Sequence[Mapping]) -> list[str]:
         spelling.setdefault(key, row["folder"])
         totals[key] = totals.get(key, 0) + _bytes(row)
     top = sorted(totals, key=lambda key: (-totals[key], key))[:TOP_FOLDERS]
-    lines = ["", "By folder (ten largest):", "", "| folder | bytes |", "| --- | ---: |"]
+    lines = ["", f"{title} (ten largest):", "", "| folder | bytes |", "| --- | ---: |"]
     lines += [f"| {spelling[key]} | {totals[key]} |" for key in top]
     return lines
 
 
 def _section_block(section: Section, rows: Sequence[Mapping], limit: str) -> list[str]:
     lines = [f"## {section.number}. {section.title} ({section.filename})", "", f"Rows: {len(rows)}"]
+    by_kind = {kind: [r for r in rows if r["kind"] == kind] for kind in ("year", "backup_only")} \
+        if section.number == 5 else {}
     if section.number == 9:
         reclaimable = sum(_bytes(r) for r in rows if r["reclaimable"] == "yes")
         lines += [f"Total size: {sum(_bytes(r) for r in rows)}", f"Reclaimable: {reclaimable}"]
+    elif section.number == 5:
+        lines += [f"Bytes {kind}: {sum(_bytes(r) for r in kind_rows)}" for kind, kind_rows in by_kind.items()]
     elif "bytes" in section.columns:
         lines.append(f"Bytes: {sum(_bytes(r) for r in rows)}")
     if section.number == 4:
@@ -106,8 +110,11 @@ def _section_block(section: Section, rows: Sequence[Mapping], limit: str) -> lis
             counts[row["kind"]] = counts.get(row["kind"], 0) + 1
         lines += [f"Kind {kind}: {counts[kind]}" for kind in sorted(counts)]
     lines.append(f"Could not see: {limit}")
-    if "folder" in section.columns and "bytes" in section.columns:
-        lines += _by_folder(rows)
+    if section.number == 5:
+        for kind, kind_rows in by_kind.items():
+            lines += _by_folder(kind_rows, f"By folder, {kind}")
+    elif "folder" in section.columns and "bytes" in section.columns:
+        lines += _by_folder(rows, "By folder")
     return lines + [""]
 
 

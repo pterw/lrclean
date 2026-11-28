@@ -125,7 +125,7 @@ class ReportTest(unittest.TestCase):
         text = self.summary()
         self.assertTrue(text.startswith("# Coverage"))
         for needle in ("E:/part-root: partial", "cat-limit.lrcat: unreadable (limits coverage)",
-                       "cat-limit.lrcat is unreadable", "Rows: 0", "Bytes: 0", "limit sentence 11",
+                       "cat-limit.lrcat is unreadable", "Rows: 0", "Bytes: 0", "Bytes year: 0", "Bytes backup_only: 0", "limit sentence 11",
                        "\nGenerated: 2026-02-03T04:05:06Z\n", "\n## Scans\n",
                        "\n- catalogs scan 1 of D:/cats: complete, finished 2026-02-03T01:00:00Z\n",
                        "\n- files scan 2 of E:/part-root: partial, finished 2026-02-03T02:00:00Z\n"):
@@ -177,6 +177,32 @@ class ReportTest(unittest.TestCase):
         self.assertNotIn("D:/F00 |", text)
         self.assertIn("| D:/solo | 900 |", text)
         self.assertNotIn("| D:/f01 |", text)  # the eleventh-largest folder is cut
+
+    def test_section_5_totals_and_tables_split_by_kind_section_4_does_not(self):
+        sections = empty_sections()
+        sections[5] = [blank_row(5, kind="year", folder="D:/a", bytes="5"),
+                       blank_row(5, kind="backup_only", folder="D:/a", bytes="7")]
+        sections[4] = [blank_row(4, kind="same_file", folder="D:/b", bytes="30"),
+                       blank_row(4, kind="not_compared", folder="D:/b", bytes="40")]
+        self.assertTrue(70 not in (5, 7, 12) and 5 != 7)
+        self.write(sections)
+        text = self.summary()
+        five = text.split(f"## 5. {report.SECTIONS[5].title}")[1].split("\n## ")[0]
+        four = text.split(f"## 4. {report.SECTIONS[4].title}")[1].split("\n## ")[0]
+        self.assertIn("Bytes year: 5\n", five)
+        self.assertIn("Bytes backup_only: 7\n", five)
+        self.assertNotIn("Bytes: 12", five)
+        self.assertNotIn("| D:/a | 12 |", five)
+        year, backup_only = five.split("By folder, year (ten largest):")[1].split(
+            "By folder, backup_only (ten largest):")
+        self.assertEqual([ln for ln in year.splitlines() if ln.startswith("| D:")], ["| D:/a | 5 |"])
+        self.assertEqual([ln for ln in backup_only.splitlines() if ln.startswith("| D:")], ["| D:/a | 7 |"])
+        self.assertNotIn("| D:/b |", five)
+        self.assertIn("Bytes: 70\n", four)
+        self.assertNotIn("Bytes same_file", four)
+        self.assertNotIn("Bytes year", four)
+        self.assertEqual(four.count("By folder (ten largest):"), 1)
+        self.assertIn("| D:/b | 70 |", four)
 
     def test_needs_eye_counts_per_kind(self):
         sections = empty_sections()

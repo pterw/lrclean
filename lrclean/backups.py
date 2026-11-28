@@ -192,8 +192,7 @@ def verify(conn, folder: str, *, library_roots: list[str], backup_roots: list[st
         fulls = [f for f in fulls if f]
         if not _candidates(row, hashes[row["id"]], index):
             counts["no_copy"] += 1
-        elif hashes[row["id"]].full in fulls:
-            counts["verified"] += 1
-        elif fulls:
-            counts["mismatch"] += 1
+            continue
+        counts["verified"] += hashes[row["id"]].full in fulls
+        counts["mismatch"] += sum(f != hashes[row["id"]].full for f in fulls)
     return counts

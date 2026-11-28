@@ -192,8 +192,11 @@ Each rule gets one test that names it.
    compared because a hash is missing or stale.
 5. **Copies on external drives.** Per year folder (`group_depth` levels under the photo root): raws, how many
    have a copy on which backup root, how many have none. A copy matched by size and sample hash is labelled
-   "sampled". `verify` hashes one folder tree and its copies in full and upgrades those rows to "verified". Also:
-   raws on each backup root that are on no library root, per top folder.
+   "sampled". `verify` hashes one folder tree and its copies in full and upgrades those rows to "verified". It
+   counts each file with an exact copy as `verified` and each copy whose full hash differs from its file's as
+   `mismatch` (a file with one exact and one corrupted copy counts in both, so the counts need not add up to the
+   files read). Also: raws on each backup root that are on no library root, per top folder. The summary totals
+   the bytes of the two kinds of row, `year` and `backup_only`, apart, each with its own "By folder" table.
 6. **RAW+JPEG pairs.** Per folder: pairs and the space of the JPEG side, split into "recorded as the raw's
    sidecar", "catalogued as its own photo" and "uncatalogued". While catalog coverage is incomplete (rule 5),
    every row says that a catalog that could not be read, or that changed, may record these files.
