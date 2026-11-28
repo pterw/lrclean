@@ -746,15 +746,24 @@ class DryRunTest(unittest.TestCase):
         offline_verified = self._row("IMG_0007.ARW")  # verified, then turned online-only
         shutil.copyfile(offline_verified.source, offline_verified.dest)
         self._journal_verified(offline_verified)
+        unstatable = self._row("IMG_0008.ARW")  # verified, but its destination's stat now fails
+        shutil.copyfile(unstatable.source, unstatable.dest)
+        self._journal_verified(unstatable)
 
         def attrs_of(path, _st):
             return 0x400000 if path in (offline.dest, offline_verified.dest) else 0
 
+        def stat(path):
+            if path == paths.fs_path(unstatable.dest):
+                raise OSError("synthetic stat failure")
+            return os.stat(path)
+
         for row in (offline, offline_verified):
             self.assertNotEqual(attrs_of(row.dest, None), attrs_of(row.source, None))
-        rows = [placeholder, changed, verified, exists, new, offline, offline_verified]
+        self.assertNotEqual(paths.fs_path(unstatable.dest), paths.fs_path(unstatable.source))
+        rows = [placeholder, changed, verified, exists, new, offline, offline_verified, unstatable]
         before = _listing(self.top)
-        got = dry_run(rows, journal_dir=self.journal_dir, n=1, attrs_of=attrs_of)
+        got = dry_run(rows, journal_dir=self.journal_dir, n=1, stat=stat, attrs_of=attrs_of)
         self.assertEqual(
             got,
             [
@@ -765,6 +774,7 @@ class DryRunTest(unittest.TestCase):
                 (4, "copy"),
                 (5, "dest_placeholder"),
                 (6, "dest_placeholder"),
+                (7, "dest_exists"),
             ],
         )
         self.assertEqual(_listing(self.top), before)
@@ -982,9 +992,17 @@ class RunManifestTest(unittest.TestCase):
              "source_bytes": rows[0].bytes, "source_mtime_ns": rows[0].mtime_ns},
         )  # fmt: skip
         before = self._journal()
-        calls = []
-        again = self._run(rows, opener=lambda p: calls.append(p) or hashing.open_binary(p))
+        calls, stats = [], []
+
+        def stat(path):
+            stats.append(path)
+            return os.stat(path)
+
+        again = self._run(rows, opener=lambda p: calls.append(p) or hashing.open_binary(p), stat=stat)
         self.assertEqual(calls, [])
+        dest_path = paths.fs_path(rows[0].dest)
+        self.assertNotEqual(dest_path, paths.fs_path(rows[0].source))
+        self.assertEqual(stats.count(dest_path), 1)  # a healthy verified skip stats its destination once
         self.assertEqual(self._journal(), before)  # one file, nothing appended
         self.assertEqual(again.results[0], got.results[0])
         self.assertEqual(os.listdir(self.journal_dir), [journal_name(1, self.STARTED)])
