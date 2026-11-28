@@ -15,6 +15,25 @@ def sha_of(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+class FailingRead:
+    """A handle that opened, whose read() fails as a bad sector would; `reads` counts the attempts."""
+    def __init__(self, handle):
+        self.handle, self.reads = handle, 0
+
+    def read(self, size=-1):
+        self.reads += 1
+        raise OSError(5, "a bad sector")
+
+    def close(self):
+        self.handle.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
 class CheckCase(unittest.TestCase):
     """A reject, two sidecars and a twin, archived on both roots."""
 
@@ -321,6 +340,40 @@ class CopyTests(CheckCase):
                 self.world.ids.clear()
                 self.world.ids[path] = pair
                 self.assert_held(self.check(), "archive_mismatch", path)
+
+    def test_rule_35_a_read_error_holds_the_row_at_the_file_whose_read_failed(self):
+        def failing(path):
+            def opener(target):
+                if paths.norm(target) == paths.norm(path):
+                    raise PermissionError(target)
+                return self.world.opener(target)
+            return self.with_seams(opener=opener)
+
+        files = [self.reject, self.side1, self.side2, *self.dests(self.reject), self.dests(self.side2)[1], self.twin]
+        self.assertEqual(len({paths.norm(path) for path in files}), 7)
+        for path in files:
+            with self.subTest(path=path):
+                self.assert_held(self.check(ctx=failing(path)), "read_error", path)
+        with self.subTest("a row without a twin"):
+            self.assert_held(self.check(self.row._replace(twin=""), ctx=failing(self.reject)),
+                             "read_error", self.reject)
+        with self.subTest("a read failing after the open"):
+            self.assert_read_fails_after_the_open()
+
+    def assert_read_fails_after_the_open(self):
+        opened, handles = [], []
+
+        def opener(target):
+            handle = self.world.opener(target)
+            if paths.norm(target) != paths.norm(self.side1):
+                return handle
+            opened.append(target)
+            handles.append(FailingRead(handle))
+            return handles[-1]
+
+        result = self.check(self.row._replace(twin=""), ctx=self.with_seams(opener=opener))
+        self.assertEqual((len(opened), handles[0].reads), (1, 1))
+        self.assert_held(result, "read_error", self.side1)
 
 
 class TwinTests(CheckCase):

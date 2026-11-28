@@ -23,6 +23,25 @@ def sha_of(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+class FailingRead:
+    """A handle that opened, whose read() fails as a bad sector would; `reads` counts the attempts."""
+    def __init__(self, handle):
+        self.handle, self.reads = handle, 0
+
+    def read(self, size=-1):
+        self.reads += 1
+        raise OSError(5, "a bad sector")
+
+    def close(self):
+        self.handle.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
 def rewrite(path: str, data: bytes, mtime_ns: int) -> None:
     with open(path, "wb") as handle:
         handle.write(data)
@@ -206,6 +225,24 @@ class PurgeRowsTests(unittest.TestCase):
         def twin(e):
             return e.twin
 
+        def unreadable(path_of):
+            def edit(fx, e):
+                def on_open(path):
+                    if os.path.normcase(path) == os.path.normcase(path_of(e)):
+                        raise PermissionError(path)
+                fx.on_open = on_open
+            return edit
+
+        def read_fails(path_of):  # the open succeeds, a later read() fails
+            def edit(fx, e):
+                real = fx.ctx.seams.opener
+
+                def opener(path):
+                    handle = real(path)
+                    return FailingRead(handle) if os.path.normcase(path) == os.path.normcase(path_of(e)) else handle
+                fx.use(opener=opener)
+            return edit
+
         # (name, index of the offender in the row, reason, edit: (fixture, entry) -> None or a new entry,
         #  the file named as failing: the staged file, an archive copy or the twin, never the library original)
         cases = [
@@ -240,6 +277,11 @@ class PurgeRowsTests(unittest.TestCase):
              lambda fx, e: fx.world.attrs.update({paths.norm(e.dests[1][0]): paths.PLACEHOLDER_MASK}), second_copy),
             ("the staged file that became a placeholder after staging", 2, "staged_changed",
              lambda fx, e: fx.world.attrs.update({paths.norm(e.staged): paths.PLACEHOLDER_MASK}), staged),
+            ("the staged file cannot be opened", 2, "read_error", unreadable(staged), staged),
+            ("the first archive copy cannot be opened", 2, "read_error", unreadable(first_copy), first_copy),
+            ("the second archive copy cannot be opened", 2, "read_error", unreadable(second_copy), second_copy),
+            ("the twin cannot be opened", 0, "read_error", unreadable(twin), twin),
+            ("the second archive copy fails mid-read", 2, "read_error", read_fails(second_copy), second_copy),
         ]
         never_opened = {"an archive copy that became a placeholder after staging",
                         "the staged file that became a placeholder after staging"}

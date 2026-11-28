@@ -18,6 +18,8 @@
   instead of failing that row at every copy (#18).
 - `backup-run` refuses a manifest whose destination lies below a junction or link inside an archive root that leads
   into a library root or out of the archive root, instead of writing the copy there (rule 17).
+- `stage` and `purge` hold a row whose file cannot be read (`read_error`, naming the file) and go on with the next
+  row, instead of stopping the whole run (#29).
 
 ## 0.1.1 - 2026-11-27
 

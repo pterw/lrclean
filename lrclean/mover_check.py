@@ -49,6 +49,13 @@ class _Hold(Exception):
         self.reason, self.file, self.kind = reason, file, kind
 
 
+class _ReadFailed(Exception):
+    """An OSError while a file's content was opened or read; `path` is that file."""
+    def __init__(self, path: str):
+        super().__init__(path)
+        self.path = path
+
+
 def _stat(ctx: Ctx, path: str):
     try:
         return ctx.seams.stat(paths.fs_path(path))
@@ -89,26 +96,32 @@ def _verify(path, size, dests, twin, *, expect, roots, ctx, tick, hash_content, 
     opener = ticked(ctx.seams.opener, tick)
 
     def digest(target):
-        return full_hash(target, opener) if hash_content else ""
+        try:
+            return full_hash(target, opener) if hash_content else ""
+        except OSError as exc:
+            raise _ReadFailed(target) from exc
 
-    sha = digest(path)
-    if expect and sha != expect:
-        return "staged_changed", path
-    stray = next((d for d, r in zip(dests, roots) if not is_inside(d, r, below_only=True)), "")
-    if len(dests) != len(roots) or stray:
-        return "archive_mismatch", stray or path
-    copies = []
-    for dest in dests:
-        copy = _sound_copy(ctx, dest, size, digest, sha)
-        if copy is None:
-            return "archive_mismatch", dest
-        copies.append(copy)
-        seen.append(Seen(dest, "archive_mismatch", copy))
-    twin_st = _sound_copy(ctx, twin, size, digest, sha) if twin else None
-    if twin and twin_st is None:
-        return "twin_mismatch", twin
-    if twin:
-        seen.append(Seen(twin, "twin_mismatch", twin_st))
+    try:
+        sha = digest(path)
+        if expect and sha != expect:
+            return "staged_changed", path
+        stray = next((d for d, r in zip(dests, roots) if not is_inside(d, r, below_only=True)), "")
+        if len(dests) != len(roots) or stray:
+            return "archive_mismatch", stray or path
+        copies = []
+        for dest in dests:
+            copy = _sound_copy(ctx, dest, size, digest, sha)
+            if copy is None:
+                return "archive_mismatch", dest
+            copies.append(copy)
+            seen.append(Seen(dest, "archive_mismatch", copy))
+        twin_st = _sound_copy(ctx, twin, size, digest, sha) if twin else None
+        if twin and twin_st is None:
+            return "twin_mismatch", twin
+        if twin:
+            seen.append(Seen(twin, "twin_mismatch", twin_st))
+    except _ReadFailed as exc:
+        return "read_error", exc.path
     group = [st, *copies]
     clash = next((b for (_, a_st), (b, b_st) in combinations(zip([path, *dests], group), 2)
                   if not other_volume(a_st, b_st)), "")  # also tells one file from two

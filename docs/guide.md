@@ -204,8 +204,9 @@ the full text.
   `rejects`), then `purge` again.
 - **Exit 4, "run catalogs again"**: a catalog changed since its snapshot (you opened Lightroom). Run `catalogs`,
   and `rejects` if the message asks.
-- **A row held at `stage` or `purge`**: the file, a sidecar, an archive copy or the twin changed or is gone. The row
-  stays where it is; read the named file and reason.
+- **A row held at `stage` or `purge`**: the file, a sidecar, an archive copy or the twin changed, is gone or could
+  not be read (`read_error`: another program holds it, a bad sector, a drive removed during the read). The row stays
+  where it is and the other rows go on; read the named file and reason.
 - **A photo you expected on the list is kept**: `out/rejects.csv` says which catalog keeps it and why. Develop
   settings changed in Lightroom (even by opening a photo in Develop) can end a twin's match.
 

@@ -659,6 +659,7 @@ _REASONS = {
     "twin_mismatch": "the twin (named) differs from the file, or is not on its own volume, so the row stays",
     "no_archive_copy": "no verified archive copy at the path named: it is missing or differs from what "
                        "backup-verify recorded",
+    "read_error": "a file of the row (named) could not be read, so the row stays",
     "staged_changed": "the staged file (named) is not the one that was staged",
     "staged_missing": "the staged file is gone",
     "changed": "the file (named) changed since the list was made",

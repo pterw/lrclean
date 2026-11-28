@@ -742,6 +742,9 @@ to 27, 29 and 30) are not repeated here; B2 checks their result again but does n
     - a row with a `twin` (rule 26a): the twin exists, is not a placeholder, is another file than the reject
       (a different (`st_dev`, `st_ino`)), has the reject's size, and its full hash equals the reject's: reason
       `twin_mismatch`. A reject without a `twin` has no twin to check, and the two archive copies are its keepers.
+    - a read of any of these files (the file, a sidecar, a destination, the twin) fails with an operating-system
+      error (another program holds it, a bad sector, a drive removed during the read): reason `read_error`; the
+      file named is the one whose read failed, and the run goes on with the next row.
     The hash of the file is taken first, then every destination; the file's `stat` is read again just before its
     rename (rule 37), so a file edited during the hashing is `changed`. A read that makes no progress for
     `stall_seconds` ends the run (rule 43).
@@ -836,8 +839,8 @@ to 27, 29 and 30) are not repeated here; B2 checks their result again but does n
     on its own brings a row into `purge`'s checks. A staged file, an open step whose file is in staging, or an
     unplaced entry still brings the row into the checks. A `begin` that cannot be placed (rule 40)
     holds its row (`unplaced`). One failure holds the whole row (`staged_changed`, `archive_mismatch`,
-    `twin_mismatch`, `family_incomplete`, `unplaced`, `outside_folders`) and nothing of it is deleted; the command
-    goes on with the other rows. Right before the first deletion of a row, every file its checks read (each staged
+    `twin_mismatch`, `read_error`, `family_incomplete`, `unplaced`, `outside_folders`) and nothing of it is
+    deleted; the command goes on with the other rows. Right before the first deletion of a row, every file its checks read (each staged
     file, each destination, the twin) is stat-ed again and must have the size, time, `st_dev` and `st_ino` it had
     when it was hashed; otherwise the row is held with that file's reason and nothing of it is deleted. Then, per
     row, the sidecars are deleted first and the reject last, each as a `begin` line, `os.remove`, an `end` line: the
