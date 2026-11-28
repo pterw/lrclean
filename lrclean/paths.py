@@ -8,6 +8,7 @@ PHOTO_EXTS = RAW_EXTS | JPEG_EXTS
 SIDECAR_EXTS = frozenset({"xmp", "acr"})
 PLACEHOLDER_MASK = 0x1000 | 0x40000 | 0x400000
 LONG_LIMIT = 247
+NAME_LIMIT = 255
 
 _EXT_PREFIX = "\\\\?\\"
 _EXT_UNC_PREFIX = "\\\\?\\UNC\\"
@@ -41,6 +42,11 @@ def fs_path(path: str) -> str:
     if len(path) >= 2 and path[1] == ":" and path[0].isalpha():
         return _EXT_PREFIX + path.replace("/", "\\")
     return path
+
+
+def name_units(name: str) -> int:
+    """Measure a Windows name component in UTF-16 code units."""
+    return len(name.encode("utf-16-le", errors="surrogatepass")) // 2
 
 
 def signed64(n: int) -> int:

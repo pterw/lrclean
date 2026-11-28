@@ -14,6 +14,8 @@
   `summary.md` totals the library's raws and the backup-only raws apart (#28).
 - `purge` holds a row whose only files are still in staging under a `stage` or `restore` step that never finished
   (`family_incomplete`, exit 6) instead of dropping it with exit 0 (#33).
+- `backup-run` refuses a manifest whose destination file name is 243 or more UTF-16 units, naming the file,
+  instead of failing that row at every copy (#18).
 
 ## 0.1.1 - 2026-11-27
 

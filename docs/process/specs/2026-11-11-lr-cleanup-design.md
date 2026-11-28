@@ -302,10 +302,12 @@ Each rule gets one test that names it.
 16. **Approved destinations only.** `backup-run` refuses the whole manifest, before any write, when a `dest` is
     not inside a configured archive root, is inside a library root, or when two rows share a `dest`; and when
     the bytes to copy exceed the free space of the destination volume. It also refuses when the last component
-    of a `dest` ends in `.lrdup-part` (in any letter case), ends in a dot or a space, or holds a colon: Windows
+    of a `dest` ends in `.lrclean-part` (in any letter case), ends in a dot or a space, or holds a colon: Windows
     opens each of those as another file, among them the part file of rule 19, whose cleanup would then delete a
-    destination. The planner still lists every file but a catalog file (a folder is copied whole), so such a
-    file must be renamed in the library before its manifest can run.
+    destination. It also refuses a `dest` whose last component plus `.lrclean-part` is longer than 255 UTF-16 code
+    units (a name of 243 units or more; a character outside the Basic Multilingual Plane counts 2): the part file
+    of rule 19 could not be created. The planner still lists every file but a catalog file (a folder is copied
+    whole), so such a file must be renamed in the library before its manifest can run.
 17. **Sources are read-only.** A source is opened for reading and nothing under a library root is created,
     changed, renamed or removed. The before-and-after listing of rule 15 holds for a backup run under the photo
     root; outside it, see Verification.
@@ -316,7 +318,7 @@ Each rule gets one test that names it.
     online-only placeholder (rule 7) is never opened: the row is `dest_placeholder`, the destination is left
     as it was, and the dry run says `dest_placeholder`. This holds also for a row the journal records as verified:
     the placeholder test comes before the journal skip.
-19. **A copy is verified by content.** The file is written to `<dest>.lrdup-part` in the destination folder
+19. **A copy is verified by content.** The file is written to `<dest>.lrclean-part` in the destination folder
     while the source is hashed, then flushed to disk and closed; the part file is read again in full and its
     SHA-256 must equal the source's; the source's size and time must still equal the manifest's; only then is
     the part file renamed to `dest` (a rename that cannot replace a file) and given the source's time. A
@@ -382,8 +384,9 @@ Found by an outside read of the copy engine on 2026-11-17, each reproduced by ru
 - **A nearly full archive drive.** A part file left behind counts against the free space, so a rerun can be
   refused for space until that file is removed by hand; the message does not name it.
 - **Planning again with fewer archive roots** removes the manifests of the higher numbers from `out/`.
-- **Names.** A short 8.3 alias of a part file's name is not recognised. A file name of 245 characters or more
-  cannot be copied (the part file's name would be too long): the row is `failed` on every run.
+- **Names.** A short 8.3 alias of a part file's name is not recognised. A file name of 243 UTF-16 code units or more
+  cannot be copied (the part file's name would be too long): `backup-run` refuses the manifest and names the file
+  (rule 16).
 - **During a comparison.** A source that grows while an existing destination is being compared is reported
   `already_there` in that run and `changed` in the next. An existing destination that is an online-only
   placeholder is refused by `backup-run` as `dest_placeholder` and by `backup-verify` as `unreadable`;

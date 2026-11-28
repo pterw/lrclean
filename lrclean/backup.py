@@ -47,6 +47,8 @@ def check_manifest(
         # Windows drops a final dot or space and reads a colon as a stream: each can open the part file.
         if name.endswith((".", " ")) or ":" in name or name.casefold().endswith(PART_SUFFIX):
             raise ManifestError(f"dest has the name of a part file: {row.dest} (source {row.source})")
+        if paths.name_units(name + PART_SUFFIX) > paths.NAME_LIMIT:
+            raise ManifestError(f"dest name too long for its part file: {row.dest} (source {row.source})")
         if row.bytes < 0:
             raise ManifestError(f"negative size for {row.dest}")
         key = paths.norm(os.path.normpath(row.dest))

@@ -84,6 +84,8 @@ class CheckManifestTest(unittest.TestCase):
 
     def test_rule18_dest_named_like_a_part_file_is_refused_by_its_last_component_only(self):
         shoot = os.path.join(self.arc, "shoot-a")
+        astral_fits = "\U0001F4F7" * 121
+        astral_too_long = "\U0001F4F7" * 122
         cases = {
             "exact suffix": (os.path.join(shoot, "IMG_0001.ARW.lrclean-part"), True),
             "suffix in another case": (os.path.join(shoot, "IMG_0001.ARW.LRCLEAN-PART"), True),
@@ -97,6 +99,10 @@ class CheckManifestTest(unittest.TestCase):
             "colon, the data stream": (os.path.join(shoot, "a.ARW::$DATA"), True),
             "dot and space in the middle": (os.path.join(shoot, "my photo.v2.ARW"), False),
             "folder component ending in a dot": (os.path.join(shoot, "x.", "IMG_0001.ARW"), False),
+            "243 ASCII characters": (os.path.join(shoot, "a" * 243), True),
+            "242 ASCII characters": (os.path.join(shoot, "a" * 242), False),
+            "121 astral characters": (os.path.join(shoot, astral_fits), False),
+            "122 astral characters": (os.path.join(shoot, astral_too_long), True),
         }
         for name, (dest, refused) in cases.items():
             with self.subTest(name):
@@ -108,6 +114,8 @@ class CheckManifestTest(unittest.TestCase):
                     self.assertIn(rows[0].source, str(caught.exception))
                 else:
                     self.assertEqual(self._check(rows), 1)
+        self.assertNotEqual(paths.name_units(astral_fits), len(astral_fits))
+        self.assertNotEqual(paths.name_units(astral_too_long), len(astral_too_long))
 
     def test_rule16_dest_in_library_root_raises_even_inside_an_archive_root(self):
         # The archive root contains the library root, so only the library check refuses.
