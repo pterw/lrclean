@@ -330,11 +330,12 @@ Each rule gets one test that names it.
     of the manifest.
 18. **Never overwrite.** When `dest` exists, both files are hashed in full: identical is `already_there`,
     different is `conflict`. A conflicting destination is left as it was. An identical one is given the source's
-    modification time when its own differs (rule 19); when that time cannot be set the row is still
-    `already_there` and one line naming the destination goes to stderr. A destination that is an
-    online-only placeholder (rule 7) is never opened: the row is `dest_placeholder`, the destination is left
-    as it was, and the dry run says `dest_placeholder`. This holds also for a row the journal records as verified:
-    the placeholder test comes before the journal skip.
+    modification time when its own differs (rule 19); when that time cannot be set, or the destination has other
+    hard links (another name shares its time, perhaps a library photo: rule 17), the row is still
+    `already_there`, the time is left as it was, and one line naming the destination goes to stderr. A
+    destination that is an online-only placeholder (rule 7) is never opened: the row is `dest_placeholder`, the
+    destination is left as it was, and the dry run says `dest_placeholder`. This holds also for a row the journal
+    records as verified: the placeholder test comes before the journal skip.
 19. **A copy is verified by content.** The file is written to `<dest>.lrclean-part` in the destination folder
     while the source is hashed, then flushed to disk and closed; the part file is read again in full and its
     SHA-256 must equal the source's; the source's size and time must still equal the manifest's; only then is

@@ -643,6 +643,21 @@ class CopyRowTest(unittest.TestCase):
         unused = mock.Mock()
         self.assertEqual(copy_row(row, utime=unused)[0], "already_there")
         unused.assert_not_called()
+        with self.subTest("a dest hard-linked to a file outside the archive root keeps its time"):
+            other = os.path.join(self.lib, "other", "IMG_0002.ARW")
+            os.makedirs(os.path.dirname(other))
+            shutil.copyfile(row.source, other)
+            os.utime(other, ns=(later, later))
+            os.remove(row.dest)
+            os.link(other, row.dest)
+            self.addCleanup(os.remove, row.dest)  # the link only, never other's folder
+            self.assertEqual(os.stat(row.dest).st_nlink, 2)
+            self.assertNotEqual(os.stat(other).st_mtime_ns, row.mtime_ns)
+            with mock.patch("sys.stderr", io.StringIO()) as err:
+                self.assertEqual(copy_row(row)[0], "already_there")
+            self.assertEqual(os.stat(other).st_mtime_ns, later)
+            self.assertIn(row.dest, err.getvalue())
+            self.assertIn("other hard links", err.getvalue())
 
     def test_b15_a_tick_follows_every_block_read_and_brackets_the_fsync(self):
         row = self._row(bytes(range(256)) * (3 * MIB // 256), dest_data=bytes(3 * MIB))

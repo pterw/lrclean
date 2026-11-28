@@ -32,7 +32,8 @@ and `backup-run` refuses more manifests before anything is written.
   SQLite 3.49 (it cannot open the copy), and, being `unreadable`, it limits coverage. `catalogs` checks that
   Lightroom is not running before it reads a `-wal` file.
 - `backup-run`: a destination that already holds the same content but another modification time gets the
-  source's time; if that cannot be set, the row stays `already_there` and one line names the file (#12).
+  source's time; if that cannot be set, or the destination has other hard links, the row stays `already_there` and
+  one line names the file (#12).
 - A sidecar named after the whole photo name (`IMG_0001.ARW.xmp`) is matched to its photo: `rejects` lists it with its
   photo and `copies` holds a copy that has one (#11).
 - `catalogs` ends with exit 3 only for Lightroom running or an unreadable process list; any other `RuntimeError` in a

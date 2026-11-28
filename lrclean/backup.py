@@ -162,6 +162,9 @@ def _copy(row, part, tick, stat, attrs_of, open_, writer, rename, utime) -> tupl
             return CONFLICT, src_sha
         if dest_st.st_mtime_ns != row.mtime_ns:
             try:
+                # Another name shares this file's time: setting it would change that file (rule 17).
+                if dest_st.st_nlink > 1:
+                    raise OSError("it has other hard links")
                 utime(paths.fs_path(row.dest), ns=(row.mtime_ns, row.mtime_ns))
             except OSError as exc:
                 print(f"the modification time of {row.dest} could not be set: {exc}", file=sys.stderr)

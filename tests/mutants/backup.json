@@ -17,6 +17,7 @@
     {"name": "dry run says already_verified for a placeholder destination", "edits": [{"file": "lrclean/backup.py", "old": "return \"dest_placeholder\" if _dest_placeholder(row, st, attrs_of) else \"already_verified\" if same else \"dest_exists\"", "new": "return \"already_verified\" if same else \"dest_placeholder\" if _dest_placeholder(row, st, attrs_of) else \"dest_exists\""}]},
     {"name": "part file name over the limit accepted", "edits": [{"file": "lrclean/backup.py", "old": "if paths.name_units(name + PART_SUFFIX) > paths.NAME_LIMIT:", "new": "if False:"}]},
     {"name": "link out of the archive root accepted", "edits": [{"file": "lrclean/backup.py", "old": "if not backup_plan.is_inside(real_dest, real_root) or any(backup_plan.is_inside(real_dest, library) for library in real_libraries):", "new": "if False:"}]},
-    {"name": "a dest that is itself a link accepted", "edits": [{"file": "lrclean/backup.py", "old": "real_dest = os.path.realpath(paths.fs_path(os.path.normpath(row.dest)))", "new": "real_dest = os.path.realpath(paths.fs_path(os.path.dirname(os.path.normpath(row.dest))))"}]}
+    {"name": "a dest that is itself a link accepted", "edits": [{"file": "lrclean/backup.py", "old": "real_dest = os.path.realpath(paths.fs_path(os.path.normpath(row.dest)))", "new": "real_dest = os.path.realpath(paths.fs_path(os.path.dirname(os.path.normpath(row.dest))))"}]},
+    {"name": "a hard-linked dest gets its time set", "edits": [{"file": "lrclean/backup.py", "old": "if dest_st.st_nlink > 1:", "new": "if False:"}]}
   ]
 }
